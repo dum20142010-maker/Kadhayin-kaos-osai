@@ -1,6 +1,6 @@
 {
-  "name": "Remix KAOS",
-  "description": "Imported from GitHub: dum20142010-maker/KAOS",
+  "name": "KAOS",
+  "description": "Discover heritage, urban secrets, local food lore, and immersive soundscapes with KAOS.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
