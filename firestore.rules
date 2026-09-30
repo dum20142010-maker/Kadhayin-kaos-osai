@@ -36,6 +36,26 @@ service cloud.firestore {
       match /savedPins/{pinId} {
         allow read, write: if isOwner(userId);
       }
+
+      // Bookmarks subcollection
+      match /bookmarks/{bookmarkId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Journal entries subcollection
+      match /journalEntries/{entryId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Search history subcollection
+      match /searchHistory/{searchId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Daily challenge claims subcollection
+      match /dailyChallengeClaims/{claimId} {
+        allow read, write: if isOwner(userId);
+      }
       
       match /{subcollection=**} {
         allow read, write: if isOwner(userId);
