@@ -1,0 +1,8 @@
+{
+  "name": "Remix KAOS",
+  "description": "Imported from GitHub: dum20142010-maker/KAOS",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

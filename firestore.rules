@@ -1,0 +1,103 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // User profile and private subcollections
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isOwner(userId);
+      
+      // Friends subcollection
+      match /friends/{friendId} {
+        allow read: if isSignedIn();
+        // Allow writing if user owns this list or if the authenticated friend is reciprocally establishing the accepted friendship
+        allow write: if isOwner(userId) || (isSignedIn() && request.auth.uid == friendId);
+      }
+
+      // Visited spots subcollection
+      match /visitedSpots/{spotKey} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Active quests subcollection
+      match /activeQuests/{questId} {
+        allow read, write: if isOwner(userId);
+      }
+      
+      // Saved map pins subcollection
+      match /savedPins/{pinId} {
+        allow read, write: if isOwner(userId);
+      }
+      
+      match /{subcollection=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Real Friend Requests
+    match /friendRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.receiverId == request.auth.uid
+      );
+      allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.receiverId == request.auth.uid
+      );
+      allow delete: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid || 
+        resource.data.receiverId == request.auth.uid
+      );
+    }
+
+    // Global 24-hour Daily Discovery Challenges
+    match /dailyChallenges/{dateKey} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+    }
+
+    // Community Echoes shared lore graph
+    match /communityEchoes/{echoId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (resource.data.authorId == request.auth.uid || request.resource.data.authorId == request.auth.uid);
+    }
+
+    // Social Discovery Activity Feed
+    match /activityFeed/{activityId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.explorerId == request.auth.uid;
+    }
+
+    // Shared Cloud-Anchored Real-World AR Artifacts (Persistent across users at GPS coordinates)
+    match /anchoredWorldArtifacts/{artifactId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.placedByUserId == request.auth.uid;
+    }
+
+    // Temporary Local Shared-View AR Sessions (Real-time live multi-user artifact synchronization)
+    match /sharedArSessions/{sessionId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeParticipantsCount', 'lastPingAt']);
+      allow delete: if isSignedIn() && resource.data.hostUserId == request.auth.uid;
+    }
+
+    // Default catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

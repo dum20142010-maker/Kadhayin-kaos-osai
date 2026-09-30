@@ -1,0 +1,15 @@
+{
+  "name": "KAOS — Every place has a story",
+  "short_name": "KAOS",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121114",
+  "theme_color": "#F05423",
+  "icons": [
+    {
+      "src": "/kaos_logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
