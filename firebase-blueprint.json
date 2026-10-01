@@ -21,6 +21,37 @@
       },
       "required": ["uid", "email", "displayName"]
     },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct 1-on-1 or group messaging chat threads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["direct", "group"] },
+        "name": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "participantIds": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "type", "name", "createdBy", "participantIds"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time chat messages and shared exploration cards",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "messageType": { "type": "string", "enum": ["text", "image", "place", "quest", "trail", "map_location"] },
+        "text": { "type": "string" },
+        "status": { "type": "string", "enum": ["sending", "sent", "delivered", "read"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "conversationId", "senderId", "senderName", "messageType"]
+    },
     "Friend": {
       "title": "Friend",
       "description": "Reciprocal confirmed friendship connection between two real registered users",
@@ -186,6 +217,14 @@
     }
   },
   "firestore": {
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "Conversation" },
+      "description": "Direct and group chat threads"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "ChatMessage" },
+      "description": "Real-time messages and shared cards"
+    },
     "/users/{userId}": {
       "schema": { "$ref": "User" },
       "description": "User profile data and VIP state"

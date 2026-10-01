@@ -1,4 +1,4 @@
-package com.example.kaos.MainActivity
+package com.example.kaos
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
