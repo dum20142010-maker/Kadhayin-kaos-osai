@@ -214,6 +214,16 @@
         "anchoredAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "artifactId", "lat", "lng", "placedByUserId"]
+    },
+    "KaosBotSession": {
+      "title": "KaosBotSession",
+      "description": "Persisted KAOS Bot chat history across sessions",
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["messages"]
     }
   },
   "firestore": {
@@ -272,6 +282,10 @@
     "/users/{userId}/dailyChallengeClaims/{claimId}": {
       "schema": { "$ref": "DailyChallengeClaim" },
       "description": "User claim history ensuring once-per-day reward claims"
+    },
+    "/users/{userId}/kaosBotHistory/{sessionId}": {
+      "schema": { "$ref": "KaosBotSession" },
+      "description": "Persisted KAOS Bot chat session history across sessions"
     }
   }
 }

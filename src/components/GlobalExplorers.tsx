@@ -58,14 +58,14 @@ export const GlobalExplorers: React.FC<GlobalExplorersProps> = ({ onShowToast })
 
   return (
     <div className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-5 sm:p-7 shadow-xl space-y-5">
-      {/* Header and Squad Info */}
+      {/* Header and Squad Mode Selector */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#26242C] pb-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[#F05423] text-xl">groups</span>
-            <h3 className="text-base font-bold text-white tracking-tight">Squad & Global Leaders</h3>
+            <h3 className="text-base font-bold text-white tracking-tight">Squad & Global Leaderboard</h3>
             <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-[#F05423]/10 text-[#F05423] border border-[#F05423]/25 font-bold">
-              SQUAD: #COROMANDEL_CREW
+              ACTIVE SQUAD: #COROMANDEL_CREW
             </span>
           </div>
           <p className="text-xs text-zinc-400">
@@ -73,24 +73,34 @@ export const GlobalExplorers: React.FC<GlobalExplorersProps> = ({ onShowToast })
           </p>
         </div>
 
-        {/* Zone Filter Chips */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#121114] border border-[#26242C] rounded-xl self-start sm:self-auto">
-          {zones.map((zone) => {
-            const isSelected = selectedZone === zone;
-            return (
-              <button
-                key={zone}
-                onClick={() => setSelectedZone(zone)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  isSelected
-                    ? 'bg-[#F05423] text-white font-bold shadow-sm'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                {zone}
-              </button>
-            );
-          })}
+        {/* View Mode & Zone Filter Chips */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 p-1 bg-[#121114] border border-[#26242C] rounded-xl">
+            <button
+              onClick={() => setSelectedZone('All')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                selectedZone === 'All' ? 'bg-[#F05423] text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Explorers
+            </button>
+            <button
+              onClick={() => setSelectedZone('Squads')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                selectedZone === 'Squads' ? 'bg-[#F05423] text-white' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Squad Rankings
+            </button>
+          </div>
+
+          <button
+            onClick={() => onShowToast('Create Squad Modal opened! Form your squad now. 🛡️')}
+            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer hover:opacity-95 transition-opacity"
+          >
+            <span className="material-symbols-outlined text-sm">group_add</span>
+            <span>Create Squad</span>
+          </button>
         </div>
       </div>
 

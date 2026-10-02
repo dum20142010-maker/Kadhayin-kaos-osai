@@ -155,54 +155,61 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
 
   return (
     <div className="space-y-6 pb-28 p-4 md:p-8 max-w-6xl mx-auto font-sans">
-      {/* View Header with Mode Toggles */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#26242C] pb-5">
-        <div>
-          <h2 className="text-2xl md:text-3xl font-bold text-white tracking-tight">
-            AR Live Lens & Google Maps Radar
-          </h2>
-          <p className="text-xs text-zinc-400 mt-1">
-            Google Maps Platform Advanced Markers, binaural acoustic telemetry, and live GPS beacon check-in
-          </p>
-        </div>
+      {/* Header Banner */}
+      <div className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className="material-symbols-outlined text-cyan-400 text-2xl">view_in_ar</span>
+              <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">AR Live Lens & Radar</h2>
+              <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                <span>Live Telemetry</span>
+              </span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-1">
+              Google Maps Platform Advanced Markers, binaural acoustic telemetry, and live GPS beacon check-in
+            </p>
+          </div>
 
-        {/* View Mode Segmented Controls */}
-        <div className="flex items-center gap-1.5 p-1 bg-[#1C1A1F] border border-[#26242C] rounded-2xl self-start sm:self-auto shrink-0">
-          <button
-            onClick={() => setViewMode('ar')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-              viewMode === 'ar'
-                ? 'bg-[#F05423] text-white shadow-md'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">view_in_ar</span>
-            <span>Live Lens</span>
-          </button>
+          {/* View Mode Segmented Controls */}
+          <div className="flex items-center gap-1.5 p-1 bg-[#121114] border border-[#26242C] rounded-2xl shrink-0">
+            <button
+              onClick={() => setViewMode('ar')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'ar'
+                  ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25 font-extrabold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">view_in_ar</span>
+              <span>Live Lens</span>
+            </button>
 
-          <button
-            onClick={() => setViewMode('map')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-              viewMode === 'map'
-                ? 'bg-[#F05423] text-white shadow-md'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">map</span>
-            <span>Google Maps</span>
-          </button>
+            <button
+              onClick={() => setViewMode('map')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'map'
+                  ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25 font-extrabold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">map</span>
+              <span>Google Maps</span>
+            </button>
 
-          <button
-            onClick={() => setViewMode('snapshot')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-              viewMode === 'snapshot'
-                ? 'bg-[#F05423] text-white shadow-md'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-            <span>Snapshot</span>
-          </button>
+            <button
+              onClick={() => setViewMode('snapshot')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'snapshot'
+                  ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25 font-extrabold'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+              <span>Snapshot</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -231,23 +238,23 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
 
               {/* Holographic Target Viewfinder */}
               <div className="relative rounded-3xl overflow-hidden border border-[#26242C] bg-gradient-to-b from-[#18161D] to-black p-8 text-center space-y-6 shadow-inner">
-                <div className="absolute inset-0 bg-[radial-gradient(#F05423_1px,transparent_1px)] [background-size:24px_24px] opacity-20 pointer-events-none" />
+                <div className="absolute inset-0 bg-[radial-gradient(#00E5FF_1px,transparent_1px)] [background-size:24px_24px] opacity-20 pointer-events-none" />
 
                 {/* Rotating AR Reticle */}
                 <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
                   <div
-                    className="absolute inset-0 rounded-full border-2 border-dashed border-[#F05423] transition-transform duration-300"
+                    className="absolute inset-0 rounded-full border-2 border-dashed border-[#00E5FF] transition-transform duration-300"
                     style={{ transform: `rotate(${bearing}deg)` }}
                   />
-                  <div className="w-20 h-20 rounded-2xl bg-[#F05423]/15 border border-[#F05423]/50 flex items-center justify-center text-white shadow-xl shadow-[#F05423]/20">
-                    <span className="material-symbols-outlined text-4xl text-[#F05423]">explore</span>
+                  <div className="w-20 h-20 rounded-2xl bg-[#00E5FF]/15 border border-[#00E5FF]/50 flex items-center justify-center text-white shadow-xl shadow-[#00E5FF]/20">
+                    <span className="material-symbols-outlined text-4xl text-[#00E5FF]">explore</span>
                   </div>
                 </div>
 
                 {/* Clear Target Info */}
                 <div className="relative z-10 space-y-2 max-w-md mx-auto">
                   <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
-                    <span className="text-[#F05423] font-bold">{currentActiveSpot.zone} Sector</span>
+                    <span className="text-[#00E5FF] font-bold font-mono">{currentActiveSpot.zone} Sector</span>
                     <span aria-hidden="true">·</span>
                     <span className="text-cyan-400 font-bold font-mono">{distanceToTargetMeters}m away</span>
                     <span aria-hidden="true">·</span>

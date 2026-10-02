@@ -1,38 +1,145 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Conversation,
-  ChatMessage,
-  ChatUser,
-  ChatAttachment,
-  MessageType,
-} from '../types/chat';
-import {
-  subscribeConversations,
-  subscribeMessages,
-  sendMessage,
-  CURRENT_USER,
-  EXPLORER_DIRECTORY,
-  createDirectConversation,
-  createGroupConversation,
-  markConversationAsRead,
-  toggleMuteConversation,
-  renameGroup,
-  removeMemberFromGroup,
-  addMembersToGroup,
-  leaveGroup,
-  deleteMessage,
-} from '../services/chatService';
 import { MasterSpot } from '../types';
 
-interface MessagesScreenProps {
+// ==========================================================================
+// CENTRAL CONTROLLED CHAOS COHERENT SCHEMAS & TOKENS
+// ==========================================================================
+
+interface SocialUser {
+  id: string;
+  displayName: string;
+  handle: string;
+  avatar: string;
+  level: number;
+  xp: number;
+  badge: string;
+  bio: string;
+  questsCompleted: number;
+  isOnline: boolean;
+  role: 'Admin' | 'Member';
+}
+
+interface Message {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  text: string;
+  timestamp: string;
+  status: 'sending' | 'sent' | 'read' | 'failed';
+  attachedSpot?: MasterSpot;
+  attachedLocation?: string;
+}
+
+interface Conversation {
+  id: string;
+  name: string;
+  avatar: string;
+  type: 'direct' | 'group';
+  lastMessageText: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  memberIds: string[];
+  groupQuestProgress?: number; // 0 - 100
+  groupQuestName?: string;
+  admins?: string[];
+  groupColor?: string; // Group-specific accent color
+}
+
+interface FriendRequest {
+  id: string;
+  sender: SocialUser;
+}
+
+interface SocialNotification {
+  id: string;
+  type: 'friend_request' | 'friend_accepted' | 'message' | 'group_invitation' | 'group_activity' | 'achievement';
+  title: string;
+  text: string;
+  time: string;
+  colorClass: string; // Pink, Lime, Teal, Purple, etc.
+}
+
+export interface MessagesScreenProps {
   onShowToast: (msg: string) => void;
   onSelectSpot?: (spot: MasterSpot) => void;
   onSelectQuest?: (quest: any) => void;
-  onNavigateToMap?: (lat?: number, lng?: number) => void;
+  onNavigateToMap?: () => void;
   initialConversationId?: string | null;
   masterSpots?: MasterSpot[];
 }
+
+// Global seed of available explorers
+const INITIAL_EXPLORERS: SocialUser[] = [
+  {
+    id: 'user_alex',
+    displayName: 'Alex Morgan',
+    handle: 'alex_explorer',
+    avatar: '🧭',
+    level: 14,
+    xp: 4200,
+    badge: 'Senior Cartographer',
+    bio: 'Surveying colonial 1920s buildings and coastal filter coffee trails.',
+    questsCompleted: 24,
+    isOnline: true,
+    role: 'Member',
+  },
+  {
+    id: 'user_priya',
+    displayName: 'Priya Sundaram',
+    handle: 'priya_madrasi',
+    avatar: '🏛️',
+    level: 18,
+    xp: 5800,
+    badge: 'Sacred Tank Specialist',
+    bio: 'Exploring acoustic reflections across ancient gopurams and temple stepwells.',
+    questsCompleted: 38,
+    isOnline: true,
+    role: 'Admin',
+  },
+  {
+    id: 'user_sam',
+    displayName: 'Sam Ramachandran',
+    handle: 'sam_peaberry',
+    avatar: '☕',
+    level: 9,
+    xp: 2600,
+    badge: 'Filter Coffee Master',
+    bio: 'Tracking down ancestral coffee houses and old peaberry recipes.',
+    questsCompleted: 15,
+    isOnline: false,
+    role: 'Member',
+  },
+  {
+    id: 'user_kavi',
+    displayName: 'Kavitha Vasudev',
+    handle: 'kavi_sounds',
+    avatar: '🎹',
+    level: 12,
+    xp: 3500,
+    badge: 'Sound Mapper',
+    bio: 'Documenting the acoustic footprints of Chennai bazaar lanes at dawn.',
+    questsCompleted: 22,
+    isOnline: true,
+    role: 'Member',
+  },
+];
+
+// Current signed-in explorer (You)
+const CURRENT_USER: SocialUser = {
+  id: 'me',
+  displayName: 'Usha Baskar',
+  handle: 'usha_explorer',
+  avatar: '🛡️',
+  level: 15,
+  xp: 4500,
+  badge: 'Chennai Legend',
+  bio: 'Mapping the beating heart of Tamil heritage from Mylapore to George Town.',
+  questsCompleted: 31,
+  isOnline: true,
+  role: 'Admin',
+};
 
 export const MessagesScreen: React.FC<MessagesScreenProps> = ({
   onShowToast,
@@ -42,797 +149,1335 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
   initialConversationId,
   masterSpots = [],
 }) => {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConvId, setActiveConvId] = useState<string | null>(initialConversationId || null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Nanbar Core Navigation: 'friends' | 'messages' | 'groups'
+  const [activeTab, setActiveTab] = useState<'friends' | 'messages' | 'groups'>('friends');
+
+  // Secondary Overlay Actions
+  const [showFindFriends, setShowFindFriends] = useState(false);
+  const [showRequestsModal, setShowRequestsModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
+  // Search filter
   const [searchQuery, setSearchQuery] = useState('');
-  const [inChatSearchQuery, setInChatSearchQuery] = useState('');
-  const [showInChatSearch, setShowInChatSearch] = useState(false);
 
-  const [inputText, setInputText] = useState('');
-  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
-  const [isNewGroupModalOpen, setIsNewGroupModalOpen] = useState(false);
-  const [isGroupInfoModalOpen, setIsGroupInfoModalOpen] = useState(false);
-  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
-  const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<string | null>(null);
+  // Handle Find Friends Search
+  const [friendSearchInput, setFriendSearchInput] = useState('');
+  const [handleError, setHandleError] = useState<string | null>(null);
 
-  // New Group State
-  const [groupName, setGroupName] = useState('');
-  const [groupImage, setGroupImage] = useState('https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=200');
-  const [selectedUserIdsForGroup, setSelectedUserIdsForGroup] = useState<string[]>([]);
+  // Friends & Requests list
+  const [myFriends, setMyFriends] = useState<SocialUser[]>([
+    INITIAL_EXPLORERS[0],
+    INITIAL_EXPLORERS[1],
+    INITIAL_EXPLORERS[2],
+  ]);
+  const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([
+    { id: 'req_1', sender: INITIAL_EXPLORERS[3] },
+  ]);
 
-  // Selected Message Options Popup
-  const [selectedMsgForMenu, setSelectedMsgForMenu] = useState<ChatMessage | null>(null);
-  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  // Social Notification logs
+  const [socialNotifications, setSocialNotifications] = useState<SocialNotification[]>([
+    { id: 'not_1', type: 'friend_accepted', title: 'Friend Request Accepted', text: 'Priya Sundaram accepted your team explorer invitation!', time: '10m ago', colorClass: 'border-kaos-lime text-kaos-lime bg-kaos-lime/10' },
+    { id: 'not_2', type: 'message', title: 'New Direct Message', text: 'Alex Morgan sent: "Found a vintage filter coffee ledger!"', time: '1h ago', colorClass: 'border-kaos-teal text-kaos-teal bg-kaos-teal/10' },
+    { id: 'not_3', type: 'group_invitation', title: 'Group Faction Invitation', text: 'You were added to Mylapore Heritage Seekers.', time: '2h ago', colorClass: 'border-kaos-purple text-kaos-purple bg-kaos-purple/10' },
+    { id: 'not_4', type: 'achievement', title: 'Group Achievement unlocked!', text: 'Mylapore water survey reached +2,000 XP milestone!', time: '1 day ago', colorClass: 'border-kaos-yellow text-kaos-yellow bg-kaos-yellow/10' },
+  ]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Chats states with approved Controlled Chaos features colors
+  const [conversations, setConversations] = useState<Conversation[]>([
+    {
+      id: 'conv_group_mylapore',
+      name: 'Mylapore Heritage Seekers',
+      avatar: '🏛️',
+      type: 'group',
+      lastMessageText: 'Ready for the morning stepwell survey?',
+      lastMessageTime: '09:42 AM',
+      unreadCount: 2,
+      memberIds: ['me', 'user_alex', 'user_priya', 'user_sam'],
+      groupQuestName: 'Decipher Kapaleeshwarar Gopuram geometry',
+      groupQuestProgress: 68,
+      admins: ['user_priya'],
+      groupColor: 'border-kaos-teal text-kaos-teal',
+    },
+    {
+      id: 'conv_alex',
+      name: 'Alex Morgan',
+      avatar: '🧭',
+      type: 'direct',
+      lastMessageText: 'Found a vintage filter coffee ledger!',
+      lastMessageTime: 'Yesterday',
+      unreadCount: 0,
+      memberIds: ['me', 'user_alex'],
+      groupColor: 'border-kaos-pink text-kaos-pink',
+    },
+    {
+      id: 'conv_sam',
+      name: 'Sam Ramachandran',
+      avatar: '☕',
+      type: 'direct',
+      lastMessageText: 'Can we check out Triplicane tomorrow?',
+      lastMessageTime: 'Tuesday',
+      unreadCount: 1,
+      memberIds: ['me', 'user_sam'],
+      groupColor: 'border-kaos-orange text-kaos-orange',
+    },
+  ]);
 
-  // 1. Subscribe to Conversation List
+  const [activeConvId, setActiveConvId] = useState<string | null>(initialConversationId || 'conv_group_mylapore');
+  const [chatMessages, setChatMessages] = useState<Record<string, Message[]>>({
+    conv_group_mylapore: [
+      { id: '1', senderId: 'user_priya', senderName: 'Priya S', senderAvatar: '🏛️', text: 'Hey guys! Look at this incredible sound map of Mylapore tank!', timestamp: '09:30 AM', status: 'read' },
+      { id: '2', senderId: 'user_alex', senderName: 'Alex M', senderAvatar: '🧭', text: 'Stunning! The acoustic echo aligns exactly with the gopuram step counts.', timestamp: '09:32 AM', status: 'read' },
+      { id: '3', senderId: 'user_sam', senderName: 'Sam R', senderAvatar: '☕', text: 'Ready for the morning stepwell survey?', timestamp: '09:42 AM', status: 'read' },
+    ],
+    conv_alex: [
+      { id: 'a1', senderId: 'user_alex', senderName: 'Alex M', senderAvatar: '🧭', text: 'Check this out, I found an old archive.', timestamp: '04:10 PM', status: 'read' },
+      { id: 'a2', senderId: 'me', senderName: 'Usha B', senderAvatar: '🛡️', text: 'Oh nice! Is that from colonial George Town?', timestamp: '04:12 PM', status: 'read' },
+      { id: 'a3', senderId: 'user_alex', senderName: 'Alex M', senderAvatar: '🧭', text: 'Yes! Found a vintage filter coffee ledger!', timestamp: '04:15 PM', status: 'read' },
+    ],
+    conv_sam: [
+      { id: 's1', senderId: 'user_sam', senderName: 'Sam R', senderAvatar: '☕', text: 'Can we check out Triplicane tomorrow?', timestamp: '01:05 PM', status: 'read' },
+    ],
+  });
+
+  // Current typed message
+  const [composeText, setComposeText] = useState('');
+
+  // Block/Report/Profile systems
+  const [blockedUsers, setBlockedUsers] = useState<SocialUser[]>([]);
+  const [viewingProfileUser, setViewingProfileUser] = useState<SocialUser | null>(null);
+  const [reportingUser, setReportingUser] = useState<SocialUser | null>(null);
+  const [reportCategory, setReportCategory] = useState('Spam');
+  const [reportDesc, setReportDesc] = useState('');
+
+  // Attachment controls inside chat
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+
+  // Group Details Modal / Creation State
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [groupNameInput, setGroupNameInput] = useState('');
+  const [selectedFriendsForGroup, setSelectedFriendsForGroup] = useState<string[]>([]);
+
+  // Active Group Nav subtab
+  const [activeGroupTab, setActiveGroupTab] = useState<'home' | 'chat' | 'quests' | 'leaderboard' | 'members' | 'activity'>('home');
+
+  // Ref for scroll to bottom
+  const messageEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Group Administrator state
+  const [selectedGroupMemberAction, setSelectedGroupMemberAction] = useState<SocialUser | null>(null);
+
+  // Real-time activity feeds for group quest completions
+  const [groupActivities, setGroupActivities] = useState<string[]>([
+    'Priya completed the Kapaleeshwarar Tank Soundscape Quest! (+150 XP)',
+    'Alex contributed +100 Quest Progress points with photo proof.',
+    'Sam shared Triplicane Coffee House live coordinates.',
+  ]);
+
+  // Clean unread count on opening conversation
   useEffect(() => {
-    const unsubscribe = subscribeConversations(CURRENT_USER.id, (list) => {
-      setConversations(list);
-      if (!activeConvId && list.length > 0) {
-        setActiveConvId(list[0].id);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 2. Subscribe to Messages inside active conversation
-  useEffect(() => {
-    if (!activeConvId) return;
-
-    markConversationAsRead(activeConvId, CURRENT_USER.id);
-
-    const unsubscribe = subscribeMessages(activeConvId, (msgList) => {
-      setMessages(msgList);
-    });
-
-    return () => unsubscribe();
+    if (activeConvId) {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeConvId ? { ...c, unreadCount: 0 } : c))
+      );
+      // Ensure group tab is home on open
+      setActiveGroupTab('home');
+    }
+    scrollToBottom();
   }, [activeConvId]);
 
-  // Auto-scroll to bottom on new message
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom();
+  }, [chatMessages]);
+
+  const scrollToBottom = () => {
+    messageEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Unique handle validation rules
+  const validateAndAddFriendByHandle = (e: React.FormEvent) => {
+    e.preventDefault();
+    setHandleError(null);
+
+    const raw = friendSearchInput.trim().replace(/^@/, '');
+    if (!raw) {
+      setHandleError('Please enter a handle.');
+      return;
     }
-  }, [messages]);
 
-  const activeConversation = conversations.find((c) => c.id === activeConvId);
+    if (raw.length < 3) {
+      setHandleError('Handle must be at least 3 characters.');
+      return;
+    }
+    if (raw.length > 20) {
+      setHandleError('Handle must be 20 characters or fewer.');
+      return;
+    }
+    if (/[A-Z]/.test(raw)) {
+      setHandleError('Handle must use lowercase letters.');
+      return;
+    }
+    if (/\s/.test(raw)) {
+      setHandleError('Handle cannot contain spaces.');
+      return;
+    }
+    if (/[^a-z0-9_]/.test(raw)) {
+      setHandleError('Handle can only contain lowercase letters, numbers, and underscores.');
+      return;
+    }
+    if (raw.startsWith('_') || raw.endsWith('_')) {
+      setHandleError('Handle cannot start or end with an underscore.');
+      return;
+    }
+    if (/__/.test(raw)) {
+      setHandleError('Handle cannot contain consecutive underscores.');
+      return;
+    }
+    if (!/[a-z]/.test(raw)) {
+      setHandleError('Handle must contain at least one letter.');
+      return;
+    }
 
-  // Search filtering
-  const filteredConversations = conversations.filter((c) => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return true;
-    return (
-      c.name.toLowerCase().includes(q) ||
-      (c.lastMessage && c.lastMessage.text.toLowerCase().includes(q)) ||
-      (c.lastMessage && c.lastMessage.senderName.toLowerCase().includes(q))
+    const foundUser = INITIAL_EXPLORERS.find(
+      (u) => u.handle.toLowerCase() === raw.toLowerCase()
     );
-  });
 
-  const filteredMessages = messages.filter((m) => {
-    const q = inChatSearchQuery.toLowerCase().trim();
-    if (!q) return true;
-    return m.text.toLowerCase().includes(q) || (m.attachment && m.attachment.title.toLowerCase().includes(q));
-  });
+    if (!foundUser) {
+      setHandleError('This handle is unavailable. Please choose another.');
+      return;
+    }
 
-  // Handle Send Message
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputText.trim() && !selectedPhotoPreview) return;
-    if (!activeConvId) return;
+    if (foundUser.id === CURRENT_USER.id) {
+      setHandleError('You cannot send a friend request to yourself.');
+      return;
+    }
 
-    const textToSend = inputText;
-    const photoToSend = selectedPhotoPreview;
+    const isAlreadyFriend = myFriends.some((f) => f.id === foundUser.id);
+    if (isAlreadyFriend) {
+      setHandleError('You are already friends with this explorer!');
+      return;
+    }
 
-    setInputText('');
-    setSelectedPhotoPreview(null);
-    setShowAttachmentMenu(false);
+    onShowToast(`Friend request sent to @${foundUser.handle}!`);
+    setFriendSearchInput('');
+    setShowFindFriends(false);
+  };
 
-    try {
-      if (photoToSend) {
-        const imageAttachment: ChatAttachment = {
-          type: 'image',
-          id: 'img_' + Date.now(),
-          title: 'Photo Attachment',
-          imageUrl: photoToSend,
-        };
-        await sendMessage(activeConvId, CURRENT_USER, textToSend || 'Sent an image photo', imageAttachment, 'image');
-      } else {
-        await sendMessage(activeConvId, CURRENT_USER, textToSend, undefined, 'text');
+  const handleAcceptRequest = (reqId: string, sender: SocialUser) => {
+    setIncomingRequests((prev) => prev.filter((r) => r.id !== reqId));
+    setMyFriends((prev) => [...prev, sender]);
+    onShowToast(`Friend request accepted from @${sender.handle}! 🎉`);
+  };
+
+  const handleDeclineRequest = (reqId: string) => {
+    setIncomingRequests((prev) => prev.filter((r) => r.id !== reqId));
+    onShowToast('Declined friend request.');
+  };
+
+  const handleRemoveFriend = (userId: string) => {
+    setMyFriends((prev) => prev.filter((f) => f.id !== userId));
+    onShowToast('Removed friend from explorer squad.');
+    setViewingProfileUser(null);
+  };
+
+  const handleBlockUser = (user: SocialUser) => {
+    setMyFriends((prev) => prev.filter((f) => f.id !== user.id));
+    setIncomingRequests((prev) => prev.filter((r) => r.sender.id !== user.id));
+    setConversations((prev) => prev.filter((c) => {
+      if (c.type === 'direct') {
+        return !c.memberIds.includes(user.id);
       }
-    } catch (err) {
-      onShowToast('Failed to send message.');
-    }
+      return true;
+    }));
+    setBlockedUsers((prev) => [...prev, user]);
+    onShowToast(`Blocked user @${user.handle}. Safety protocol updated.`);
+    setViewingProfileUser(null);
   };
 
-  // Start direct conversation with contact
-  const handleStartDirectChat = async (user: ChatUser) => {
-    setIsNewChatModalOpen(false);
-    try {
-      const conv = await createDirectConversation(CURRENT_USER.id, user);
-      setActiveConvId(conv.id);
-      onShowToast(`Opened conversation with ${user.displayName}`);
-    } catch (e) {
-      onShowToast('Error starting chat.');
-    }
+  const handleUnblockUser = (userId: string) => {
+    setBlockedUsers((prev) => prev.filter((b) => b.id !== userId));
+    onShowToast('Unblocked user. Friendship is not automatically restored.');
   };
 
-  // Create group chat
-  const handleCreateGroup = async () => {
-    if (!groupName.trim()) {
-      onShowToast('Please enter a group name.');
-      return;
-    }
-    if (selectedUserIdsForGroup.length === 0) {
-      onShowToast('Please select at least one group member.');
-      return;
-    }
-
-    const selectedUsers = EXPLORER_DIRECTORY.filter((u) => selectedUserIdsForGroup.includes(u.id));
-    try {
-      const group = await createGroupConversation(
-        CURRENT_USER.id,
-        groupName,
-        groupImage,
-        selectedUsers
-      );
-      setActiveConvId(group.id);
-      setIsNewGroupModalOpen(false);
-      setGroupName('');
-      setSelectedUserIdsForGroup([]);
-      onShowToast(`Created group "${group.name}"`);
-    } catch (e) {
-      onShowToast('Error creating group.');
-    }
+  const handleSubmitReport = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportingUser) return;
+    onShowToast('Report submitted. Thank you for helping keep KAOS safe.');
+    setReportingUser(null);
+    setReportDesc('');
   };
 
-  // Quick Attach Spot / Quest / Location
-  const handleQuickAttachSpot = (spot: MasterSpot) => {
-    if (!activeConvId) return;
-    const attachment: ChatAttachment = {
-      type: 'place',
-      id: spot.id,
-      title: spot.title,
-      description: spot.description,
-      imageUrl: spot.imageUrl,
-      location: spot.zone + ' Sector',
-      extraData: { zone: spot.zone },
+  const handleSendMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = composeText.trim();
+    if (!clean || !activeConvId) return;
+
+    const newMsg: Message = {
+      id: `msg_${Date.now()}`,
+      senderId: 'me',
+      senderName: CURRENT_USER.displayName,
+      senderAvatar: CURRENT_USER.avatar,
+      text: clean,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: 'sent',
     };
-    sendMessage(activeConvId, CURRENT_USER, `Check out ${spot.title}!`, attachment, 'place');
-    setShowAttachmentMenu(false);
-    onShowToast(`Attached ${spot.title} to chat`);
+
+    setChatMessages((prev) => ({
+      ...prev,
+      [activeConvId]: [...(prev[activeConvId] || []), newMsg],
+    }));
+
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === activeConvId
+          ? { ...c, lastMessageText: clean, lastMessageTime: 'Just now' }
+          : c
+      )
+    );
+
+    setComposeText('');
+    scrollToBottom();
   };
 
-  const handleQuickAttachLocation = () => {
+  const handleAttachSpotToChat = (spot: MasterSpot) => {
     if (!activeConvId) return;
-    const attachment: ChatAttachment = {
-      type: 'map_location',
-      id: 'loc_' + Date.now(),
-      title: 'Current Live Geolocation',
-      description: 'Chepauk Stadium Quadrangle',
-      location: '13.0642° N, 80.2811° E',
-      extraData: { lat: 13.0642, lng: 80.2811 },
+    const newMsg: Message = {
+      id: `msg_spot_${Date.now()}`,
+      senderId: 'me',
+      senderName: CURRENT_USER.displayName,
+      senderAvatar: CURRENT_USER.avatar,
+      text: `Let us explore: ${spot.title}!`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: 'sent',
+      attachedSpot: spot,
     };
-    sendMessage(activeConvId, CURRENT_USER, 'Sharing my active map coordinates', attachment, 'map_location');
-    setShowAttachmentMenu(false);
-    onShowToast('Shared location map pin to chat');
+    setChatMessages((prev) => ({
+      ...prev,
+      [activeConvId]: [...(prev[activeConvId] || []), newMsg],
+    }));
+    setShowAttachMenu(false);
+    onShowToast(`Attached spot "${spot.title}" directly to chat!`);
   };
 
-  const handlePhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setSelectedPhotoPreview(reader.result as string);
-        setShowAttachmentMenu(false);
-      };
-      reader.readAsDataURL(file);
-    }
+  const handleAttachCoordinates = () => {
+    if (!activeConvId) return;
+    const newMsg: Message = {
+      id: `msg_coords_${Date.now()}`,
+      senderId: 'me',
+      senderName: CURRENT_USER.displayName,
+      senderAvatar: CURRENT_USER.avatar,
+      text: 'Shared current map tracking pin',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: 'sent',
+      attachedLocation: '13.0628° N, 80.2707° E (Chennai Central Clock Tower)',
+    };
+    setChatMessages((prev) => ({
+      ...prev,
+      [activeConvId]: [...(prev[activeConvId] || []), newMsg],
+    }));
+    setShowAttachMenu(false);
+    onShowToast('Map coordinates pins attached successfully!');
   };
+
+  const handleConfirmCreateGroup = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!groupNameInput.trim()) return;
+
+    const newGroupId = `conv_group_${Date.now()}`;
+    const newGroup: Conversation = {
+      id: newGroupId,
+      name: groupNameInput,
+      avatar: '🛡️',
+      type: 'group',
+      lastMessageText: 'New exploration squad formed!',
+      lastMessageTime: 'Just now',
+      unreadCount: 0,
+      memberIds: ['me', ...selectedFriendsForGroup],
+      groupQuestName: 'Survey traditional peaberry roasteries',
+      groupQuestProgress: 10,
+      groupColor: 'border-kaos-pink text-kaos-pink',
+    };
+
+    setConversations((prev) => [newGroup, ...prev]);
+    setChatMessages((prev) => ({
+      ...prev,
+      [newGroupId]: [
+        {
+          id: 'init_1',
+          senderId: 'me',
+          senderName: CURRENT_USER.displayName,
+          senderAvatar: CURRENT_USER.avatar,
+          text: `Welcome to the "${groupNameInput}" faction group!`,
+          timestamp: 'Just now',
+          status: 'sent',
+        },
+      ],
+    }));
+
+    setGroupNameInput('');
+    setSelectedFriendsForGroup([]);
+    setShowCreateGroupModal(false);
+    setActiveConvId(newGroupId);
+    onShowToast(`Squad Faction "${newGroup.name}" created! ⚔️`);
+  };
+
+  const handleKickMember = (userId: string, groupName: string) => {
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === activeConvId) {
+          return {
+            ...c,
+            memberIds: c.memberIds.filter((m) => m !== userId),
+          };
+        }
+        return c;
+      })
+    );
+    setSelectedGroupMemberAction(null);
+    onShowToast(`Removed surveyor from group ${groupName}.`);
+  };
+
+  const activeConv = conversations.find((c) => c.id === activeConvId);
+  const currentGroupMembers: SocialUser[] = activeConv
+    ? [CURRENT_USER, ...INITIAL_EXPLORERS].filter((u) => activeConv.memberIds.includes(u.id))
+    : [];
 
   return (
-    <div className="pb-24 p-2 md:p-6 max-w-7xl mx-auto h-[calc(100vh-120px)] flex flex-col font-sans select-none">
-      {/* 2-Panel Chat Layout Container */}
-      <div className="flex-1 bg-[#1C1A1F] border border-[#26242C] rounded-3xl overflow-hidden flex flex-col md:flex-row shadow-2xl min-h-0">
-        
-        {/* LEFT PANEL: Conversation List & Search */}
-        <div
-          className={`w-full md:w-80 lg:w-96 border-r border-[#26242C] flex flex-col bg-[#121114] ${
-            activeConvId ? 'hidden md:flex' : 'flex'
+    <div className="pb-28 p-4 md:p-8 max-w-6xl mx-auto h-[calc(100vh-140px)] flex flex-col font-sans select-none text-kaos-offwhite selection:bg-kaos-pink/20">
+      
+      {/* 1. NANBAR HOME BANNER */}
+      <div className="bg-gradient-to-r from-kaos-pink to-kaos-purple rounded-3xl p-5 md:p-6 mb-6 shadow-xl relative overflow-hidden border border-kaos-pink/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="relative z-10 flex items-center gap-3">
+          <span className="material-symbols-outlined text-kaos-yellow text-4xl animate-pulse">diversity_3</span>
+          <div>
+            <h2 className="text-xl md:text-2xl font-black text-kaos-offwhite tracking-wider">NANBAR</h2>
+            <p className="text-xs text-kaos-offwhite/95 font-semibold mt-1">Explore Chennai together. Complete quests, chat and conquer leaderboards.</p>
+          </div>
+        </div>
+
+        {/* Secondary Navigation actions in the header */}
+        <div className="flex items-center gap-2 relative z-10 shrink-0">
+          <button
+            onClick={() => setShowFindFriends(true)}
+            className="p-2.5 rounded-xl bg-kaos-navy/80 hover:bg-kaos-navy text-kaos-teal font-extrabold text-xs flex items-center gap-1.5 shadow-md border border-kaos-teal/20 cursor-pointer"
+            title="Search explorers by handle"
+          >
+            <span className="material-symbols-outlined text-sm font-bold">search</span>
+            <span>Find People</span>
+          </button>
+
+          <button
+            onClick={() => setShowRequestsModal(true)}
+            className="p-2.5 rounded-xl bg-kaos-navy/80 hover:bg-kaos-navy text-kaos-pink font-extrabold text-xs flex items-center gap-1.5 shadow-md border border-kaos-pink/20 relative cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-sm font-bold">person_add</span>
+            <span>Requests</span>
+            {incomingRequests.length > 0 && (
+              <span className="absolute -top-1.5 -right-1 px-1.5 py-0.5 rounded-full bg-kaos-yellow text-kaos-navy text-[8px] font-black animate-bounce">
+                {incomingRequests.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setShowNotificationsModal(true)}
+            className="p-2.5 rounded-xl bg-kaos-navy/80 hover:bg-kaos-navy text-kaos-yellow font-extrabold text-xs flex items-center gap-1.5 shadow-md border border-kaos-yellow/20 relative cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-sm font-bold">notifications</span>
+            <span>Inbox</span>
+          </button>
+
+          <button
+            onClick={() => setShowPrivacyModal(true)}
+            className="p-2.5 rounded-xl bg-kaos-navy/80 hover:bg-kaos-navy text-kaos-red font-extrabold text-xs flex items-center gap-1.5 shadow-md border border-kaos-red/20 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-sm font-bold">shield_lock</span>
+            <span>Safety</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 2. NANBAR CORE NAVIGATION: Friends | Messages | Groups */}
+      <div className="flex items-center gap-1.5 bg-surface-primary border border-progress-track p-1.5 rounded-2xl w-fit mb-6">
+        <button
+          onClick={() => setActiveTab('friends')}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'friends' ? 'bg-kaos-pink text-white shadow-lg' : 'text-text-secondary hover:text-kaos-offwhite'
           }`}
         >
-          {/* Top Panel Header & Search Bar */}
-          <div className="p-4 border-b border-[#26242C] space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#F05423]">forum</span>
-                <span>Messages</span>
-              </h2>
+          <span className="material-symbols-outlined text-[16px]">groups</span>
+          <span>FRIENDS</span>
+          <span className="px-1.5 py-0.5 rounded bg-surface-secondary text-text-secondary text-[9px] font-mono font-bold">
+            {myFriends.length}
+          </span>
+        </button>
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setIsNewChatModalOpen(true)}
-                  className="w-8 h-8 rounded-xl bg-[#1C1A1F] hover:bg-[#26242C] border border-[#26242C] text-zinc-300 hover:text-white flex items-center justify-center transition-all cursor-pointer"
-                  title="New Direct Chat"
-                >
-                  <span className="material-symbols-outlined text-sm">chat</span>
-                </button>
-                <button
-                  onClick={() => setIsNewGroupModalOpen(true)}
-                  className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shadow-md"
-                  title="Create New Group Chat"
-                >
-                  <span className="material-symbols-outlined text-sm">group_add</span>
-                  <span className="hidden sm:inline">New Group</span>
-                </button>
+        <button
+          onClick={() => setActiveTab('messages')}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'messages' ? 'bg-kaos-teal text-kaos-navy shadow-lg' : 'text-text-secondary hover:text-kaos-offwhite'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[16px]">forum</span>
+          <span>DIRECT MESSAGES</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('groups')}
+          className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === 'groups' ? 'bg-kaos-purple text-white shadow-lg' : 'text-text-secondary hover:text-kaos-offwhite'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[16px]">diversity_3</span>
+          <span>GROUPS</span>
+        </button>
+      </div>
+
+      {/* 3. CORE DISPLAY LAYOUT PANELS */}
+      <div className="flex-1 bg-surface-primary border border-progress-track rounded-3xl overflow-hidden flex flex-col md:flex-row shadow-2xl min-h-0">
+        
+        {/* TAB A: FRIENDS DIRECTORY */}
+        {activeTab === 'friends' && (
+          <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 bg-background-secondary/30">
+            <div className="border-b border-progress-track pb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-kaos-offwhite">My Explorer Squad</h3>
+                <p className="text-xs text-text-secondary">Directly track which teammates are active on Chennai heritage trails.</p>
               </div>
             </div>
 
-            {/* Conversation Search Bar */}
-            <div className="relative">
-              <span className="material-symbols-outlined absolute left-3 top-2.5 text-zinc-500 text-sm">
-                search
-              </span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search chats, contacts, or messages..."
-                className="w-full bg-[#1C1A1F] border border-[#26242C] rounded-2xl pl-9 pr-4 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#F05423] transition-colors"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-2.5 text-zinc-500 hover:text-white cursor-pointer"
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {myFriends.map((f) => (
+                <div
+                  key={f.id}
+                  className="bg-surface-primary border border-progress-track rounded-2xl p-4 flex flex-col justify-between gap-4 shadow-md relative overflow-hidden"
                 >
-                  <span className="material-symbols-outlined text-xs">close</span>
-                </button>
-              )}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-2xl shrink-0 shadow-md">
+                        {f.avatar}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-extrabold text-kaos-offwhite">{f.displayName}</span>
+                          <span className={`w-2.5 h-2.5 rounded-full ${f.isOnline ? 'bg-online animate-pulse shadow-md' : 'bg-text-muted'}`} />
+                        </div>
+                        <span className="text-[10px] text-text-secondary block">@{f.handle}</span>
+                        <p className="text-[9px] font-bold text-kaos-yellow mt-1 font-mono uppercase bg-surface-secondary border border-kaos-yellow/15 px-1.5 py-0.2 rounded-full w-fit">
+                          Lv {f.level} · {f.badge}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-text-secondary leading-relaxed min-h-[32px] border-t border-progress-track/50 pt-2 italic">
+                    "{f.bio}"
+                  </p>
+
+                  <div className="flex items-center gap-2 border-t border-progress-track pt-3 text-xs">
+                    <button
+                      onClick={() => {
+                        const existing = conversations.find((c) => c.type === 'direct' && c.memberIds.includes(f.id));
+                        if (existing) {
+                          setActiveConvId(existing.id);
+                        } else {
+                          const newId = `conv_${f.id}_${Date.now()}`;
+                          const dConv: Conversation = {
+                            id: newId,
+                            name: f.displayName,
+                            avatar: f.avatar,
+                            type: 'direct',
+                            lastMessageText: 'Say hello to your teammate!',
+                            lastMessageTime: 'Just now',
+                            unreadCount: 0,
+                            memberIds: ['me', f.id],
+                          };
+                          setConversations((prev) => [dConv, ...prev]);
+                          setActiveConvId(newId);
+                        }
+                        setActiveTab('messages');
+                        onShowToast(`Opened message thread with @${f.handle}`);
+                      }}
+                      className="flex-1 py-1.5 rounded-xl bg-surface-secondary hover:bg-kaos-pink text-kaos-pink hover:text-white border border-kaos-pink/15 text-center font-bold cursor-pointer transition-all"
+                    >
+                      Message
+                    </button>
+                    <button
+                      onClick={() => setViewingProfileUser(f)}
+                      className="py-1.5 px-3 rounded-xl bg-surface-secondary text-text-secondary hover:text-kaos-offwhite border border-progress-track text-center font-bold cursor-pointer transition-all"
+                    >
+                      View Cards
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
+        )}
 
-          {/* Conversations Scrollable List */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin">
-            {filteredConversations.length === 0 ? (
-              <div className="p-8 text-center space-y-2">
-                <span className="material-symbols-outlined text-3xl text-zinc-600">chat_bubble_outline</span>
-                <p className="text-xs text-zinc-400 font-bold">No conversations found</p>
-                <p className="text-[11px] text-zinc-600">Start a new 1-on-1 chat or group conversation</p>
+        {/* TAB B: DIRECT MESSAGES */}
+        {activeTab === 'messages' && (
+          <>
+            {/* Sidebar threads */}
+            <div className={`w-full md:w-80 lg:w-96 border-r border-progress-track flex flex-col bg-background-secondary ${activeConvId ? 'hidden md:flex' : 'flex'}`}>
+              <div className="p-4 border-b border-progress-track space-y-2.5">
+                <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider">Chat Inboxes</h4>
+                <input
+                  type="text"
+                  placeholder="Filter conversations..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-surface-primary border border-progress-track rounded-xl px-3 py-2 text-xs text-kaos-offwhite focus:outline-none focus:border-kaos-pink placeholder-text-muted"
+                />
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                <AnimatePresence mode="popLayout">
+                  {conversations
+                    .filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map((conv) => {
+                      const isSelected = activeConvId === conv.id;
+                      return (
+                        <motion.button
+                          layout
+                          initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.96, x: -10 }}
+                          transition={{ duration: 0.22, ease: 'easeOut' }}
+                          key={conv.id}
+                          onClick={() => setActiveConvId(conv.id)}
+                          className={`w-full p-3 rounded-2xl text-left border transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                            isSelected
+                              ? 'bg-surface-secondary border-kaos-pink/30'
+                              : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-xl shrink-0">
+                              {conv.avatar}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <h4 className="text-xs font-bold text-kaos-offwhite truncate">{conv.name}</h4>
+                                <span className="text-[9px] text-text-muted font-mono">{conv.lastMessageTime}</span>
+                              </div>
+                              <p className="text-[11px] text-text-secondary truncate mt-0.5">{conv.lastMessageText}</p>
+                            </div>
+                          </div>
+
+                          {conv.unreadCount > 0 && (
+                            <span className="w-5 h-5 rounded-full bg-kaos-pink text-white font-bold font-mono text-[10px] flex items-center justify-center shrink-0 shadow-md">
+                              {conv.unreadCount}
+                            </span>
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {/* Chat Pane */}
+            <div className={`flex-1 flex flex-col bg-surface-primary ${!activeConvId ? 'hidden md:flex' : 'flex'}`}>
+              {activeConv ? (
+                <>
+                  <div className="p-4 border-b border-progress-track flex items-center justify-between gap-4 bg-background-secondary shrink-0">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setActiveConvId(null)}
+                        className="md:hidden p-2 rounded-xl hover:bg-surface-secondary text-text-secondary"
+                      >
+                        <span className="material-symbols-outlined font-bold text-base text-kaos-pink">arrow_back</span>
+                      </button>
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-xl shadow-md">
+                        {activeConv.avatar}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-kaos-offwhite">{activeConv.name}</h4>
+                        <p className="text-[10px] text-text-secondary mt-0.5 font-mono">@{activeConv.type} private line</p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        const contact = INITIAL_EXPLORERS.find((u) => activeConv.memberIds.includes(u.id) && u.id !== 'me');
+                        if (contact) setViewingProfileUser(contact);
+                      }}
+                      className="p-2 rounded-xl bg-surface-primary border border-progress-track text-text-secondary hover:text-kaos-pink cursor-pointer shadow-md"
+                    >
+                      <span className="material-symbols-outlined text-sm font-bold">info</span>
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-primary/40">
+                    <AnimatePresence mode="popLayout">
+                      {(chatMessages[activeConv.id] || []).map((msg) => {
+                        const isMe = msg.senderId === 'me';
+                        return (
+                          <motion.div
+                            layout
+                            initial={{ opacity: 0, y: 15, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.92, y: -8 }}
+                            transition={{ duration: 0.22, ease: 'easeOut' }}
+                            key={msg.id}
+                            className={`flex gap-3 max-w-[80%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+                          >
+                            <div className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0">
+                              {msg.senderAvatar}
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-bold text-kaos-offwhite">{msg.senderName}</span>
+                                <span className="text-[8px] text-text-muted font-mono">{msg.timestamp}</span>
+                              </div>
+                              <div
+                                className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                                  isMe
+                                    ? 'bg-kaos-pink text-white rounded-tr-none shadow-md'
+                                    : 'bg-surface-secondary text-kaos-offwhite rounded-tl-none border border-progress-track'
+                                }`}
+                              >
+                                {msg.text}
+
+                                {msg.attachedSpot && (
+                                  <div className="mt-3 bg-surface-primary border border-progress-track p-3 rounded-xl text-kaos-offwhite space-y-2 text-left shadow-lg">
+                                    <img
+                                      src={msg.attachedSpot.imageUrl}
+                                      alt={msg.attachedSpot.title}
+                                      className="w-full h-24 object-cover rounded-lg"
+                                    />
+                                    <div>
+                                      <p className="font-extrabold text-xs text-kaos-teal">{msg.attachedSpot.title}</p>
+                                      <p className="text-[10px] text-text-secondary mt-0.5 truncate">{msg.attachedSpot.description}</p>
+                                    </div>
+                                    <button
+                                      onClick={() => onSelectSpot?.(msg.attachedSpot!)}
+                                      className="w-full text-center py-1.5 rounded-lg bg-kaos-teal text-kaos-navy font-black text-[10px]"
+                                    >
+                                      Inspect Landmark
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                    <div ref={messageEndRef} />
+                  </div>
+
+                  {/* Composer */}
+                  <div className="p-4 border-t border-progress-track bg-background-secondary shrink-0 relative">
+                    {showAttachMenu && (
+                      <div className="absolute bottom-16 left-4 bg-surface-primary border border-progress-track rounded-2xl p-2.5 space-y-1.5 shadow-2xl w-48 z-40 animate-in fade-in">
+                        <p className="text-[9px] font-bold text-text-secondary uppercase px-2 mb-1">Quick Attach Clue</p>
+                        {masterSpots.slice(0, 2).map((spot) => (
+                          <button
+                            key={spot.id}
+                            onClick={() => handleAttachSpotToChat(spot)}
+                            className="w-full px-2 py-1.5 rounded-lg hover:bg-surface-secondary text-left text-xs font-semibold text-kaos-offwhite flex items-center gap-2 cursor-pointer"
+                          >
+                            🗺️ {spot.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAttachMenu(!showAttachMenu)}
+                        className="p-2.5 rounded-xl bg-surface-primary border border-progress-track text-text-secondary hover:text-kaos-pink flex items-center justify-center cursor-pointer shadow-md shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-sm font-bold">add_location_alt</span>
+                      </button>
+
+                      <input
+                        type="text"
+                        placeholder="Type a secure message..."
+                        value={composeText}
+                        onChange={(e) => setComposeText(e.target.value)}
+                        className="flex-1 bg-surface-primary border border-progress-track rounded-xl px-4 py-2.5 text-xs text-kaos-offwhite focus:outline-none focus:border-kaos-pink placeholder-text-muted"
+                      />
+
+                      <button
+                        type="submit"
+                        className="px-4 py-2.5 rounded-xl bg-kaos-pink hover:bg-kaos-purple text-white text-xs font-bold shadow-md transition-all cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-sm">send</span>
+                      </button>
+                    </form>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-background-secondary">
+                  <span className="material-symbols-outlined text-4xl text-kaos-pink mb-2">forum</span>
+                  <h4 className="text-sm font-bold text-kaos-offwhite">No direct message threads selected</h4>
+                  <p className="text-xs text-text-secondary mt-1">Select a teammate explorer on the left to initiate private DM routes.</p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* TAB C: FACTION GROUPS */}
+        {activeTab === 'groups' && (
+          <>
+            {/* Left groups sidebar */}
+            <div className={`w-full md:w-80 lg:w-96 border-r border-progress-track flex flex-col bg-background-secondary ${activeConvId?.startsWith('conv_group') ? 'hidden md:flex' : 'flex'}`}>
+              <div className="p-4 border-b border-progress-track flex items-center justify-between">
+                <span className="text-xs font-bold text-text-secondary uppercase">My active groups</span>
                 <button
-                  onClick={() => setIsNewChatModalOpen(true)}
-                  className="mt-2 px-4 py-2 rounded-xl bg-[#F05423] text-white text-xs font-bold hover:bg-[#d64a1e] transition-colors cursor-pointer"
+                  onClick={() => {
+                    setSelectedFriendsForGroup([]);
+                    setGroupNameInput('');
+                    setShowCreateGroupModal(true);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-kaos-purple hover:bg-kaos-pink text-white font-extrabold text-[10px] flex items-center gap-1 shadow-md cursor-pointer"
                 >
-                  Start a Conversation
+                  <span className="material-symbols-outlined text-xs">group_add</span>
+                  <span>Form Group</span>
                 </button>
               </div>
-            ) : (
-              filteredConversations.map((conv) => {
-                const isActive = activeConvId === conv.id;
-                const isMuted = conv.mutedUserIds?.includes(CURRENT_USER.id);
 
-                return (
-                  <button
-                    key={conv.id}
-                    onClick={() => setActiveConvId(conv.id)}
-                    className={`w-full p-3 rounded-2xl text-left transition-all flex items-center justify-between cursor-pointer border ${
-                      isActive
-                        ? 'bg-[#1C1A1F] border-[#F05423]/60 text-white shadow-md'
-                        : 'bg-transparent border-transparent hover:bg-[#1C1A1F]/50 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="relative shrink-0">
-                        <img
-                          src={
-                            conv.imageUrl ||
-                            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'
-                          }
-                          alt={conv.name}
-                          className="w-11 h-11 rounded-2xl object-cover border border-[#26242C]"
-                        />
-                        {conv.type === 'group' && (
-                          <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-md bg-[#F05423] text-white flex items-center justify-center text-[9px] shadow-sm">
-                            <span className="material-symbols-outlined text-[10px]">groups</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <h4 className="text-xs font-bold text-white truncate">{conv.name}</h4>
-                          {conv.lastMessage?.createdAt && (
-                            <span className="text-[9px] font-mono text-zinc-500 shrink-0">
-                              {new Date(conv.lastMessage.createdAt).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </span>
-                          )}
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {conversations
+                  .filter((c) => c.type === 'group')
+                  .map((group) => {
+                    const isSelected = activeConvId === group.id;
+                    return (
+                      <button
+                        key={group.id}
+                        onClick={() => {
+                          setActiveConvId(group.id);
+                          setActiveGroupTab('home');
+                        }}
+                        className={`w-full p-3 rounded-2xl text-left border transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                          isSelected
+                            ? 'bg-surface-secondary border-kaos-purple/30'
+                            : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-purple to-kaos-pink flex items-center justify-center text-xl shrink-0">
+                            {group.avatar}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-bold text-kaos-offwhite truncate">{group.name}</h4>
+                            <p className="text-[10px] text-text-secondary mt-0.5 truncate">{group.memberIds.length} active surveyors</p>
+                          </div>
                         </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
 
-                        <p className="text-[11px] text-zinc-400 truncate mt-0.5 flex items-center gap-1">
-                          {isMuted && (
-                            <span className="material-symbols-outlined text-[12px] text-zinc-500">
-                              notifications_off
-                            </span>
-                          )}
-                          <span>
-                            {conv.lastMessage
-                              ? `${conv.lastMessage.senderName}: ${conv.lastMessage.text}`
-                              : 'No messages yet'}
-                          </span>
+            {/* Right Group Portal details */}
+            <div className={`flex-1 flex flex-col bg-surface-primary ${!activeConvId?.startsWith('conv_group') ? 'hidden md:flex' : 'flex'}`}>
+              {activeConv && activeConv.type === 'group' ? (
+                <>
+                  {/* Group header identity */}
+                  <div className="p-4 border-b border-progress-track bg-background-secondary flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-kaos-purple to-kaos-pink flex items-center justify-center text-2xl shadow-md">
+                        {activeConv.avatar}
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-kaos-offwhite uppercase tracking-wider">{activeConv.name}</h4>
+                        <p className="text-[10px] text-text-secondary mt-0.5 font-mono">
+                          {activeConv.memberIds.length} active explorers · Level {Math.floor(activeConv.groupQuestProgress! / 20) + 1}
                         </p>
                       </div>
                     </div>
 
-                    {conv.unreadCount && conv.unreadCount > 0 ? (
-                      <span className="ml-2 w-5 h-5 rounded-full bg-[#F05423] text-white font-mono text-[10px] font-bold flex items-center justify-center shrink-0 shadow-sm">
-                        {conv.unreadCount}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* RIGHT PANEL: Active Chat Conversation View */}
-        <div
-          className={`flex-1 flex flex-col bg-[#1C1A1F] ${
-            !activeConvId ? 'hidden md:flex' : 'flex'
-          }`}
-        >
-          {activeConversation ? (
-            <>
-              {/* CHAT HEADER */}
-              <div className="p-4 border-b border-[#26242C] bg-[#121114] flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  {/* Back button on mobile */}
-                  <button
-                    onClick={() => setActiveConvId(null)}
-                    className="md:hidden w-8 h-8 rounded-full bg-[#1C1A1F] border border-[#26242C] flex items-center justify-center text-zinc-400 hover:text-white cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-sm">arrow_back</span>
-                  </button>
-
-                  <img
-                    src={
-                      activeConversation.imageUrl ||
-                      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'
-                    }
-                    alt={activeConversation.name}
-                    className="w-10 h-10 rounded-2xl object-cover border border-[#26242C] shrink-0"
-                  />
-
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-bold text-white truncate flex items-center gap-2">
-                      <span>{activeConversation.name}</span>
-                      {activeConversation.type === 'group' && (
-                        <span className="px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800 text-[9px] font-mono font-bold uppercase">
-                          {activeConversation.participantIds.length} members
-                        </span>
-                      )}
-                    </h3>
-                    <p className="text-[10px] text-zinc-400 font-mono">
-                      {activeConversation.type === 'group'
-                        ? 'Group Conversation'
-                        : 'Active Direct Message'}
-                    </p>
+                    {/* Group Tab navigation: Home | Chat | Quests | Leaderboard | Members | Activity */}
+                    <div className="flex items-center gap-1 bg-surface-primary border border-progress-track p-1 rounded-xl shrink-0 overflow-x-auto scrollbar-none">
+                      {['home', 'chat', 'quests', 'leaderboard', 'members', 'activity'].map((sub) => (
+                        <button
+                          key={sub}
+                          onClick={() => setActiveGroupTab(sub as any)}
+                          className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer shrink-0 ${
+                            activeGroupTab === sub
+                              ? 'bg-kaos-purple text-white'
+                              : 'text-text-secondary hover:text-kaos-offwhite'
+                          }`}
+                        >
+                          {sub}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Header Action Controls */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowInChatSearch(!showInChatSearch)}
-                    className="w-8 h-8 rounded-xl bg-[#1C1A1F] border border-[#26242C] text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                    title="Search conversation"
-                  >
-                    <span className="material-symbols-outlined text-sm">search</span>
-                  </button>
-
-                  <button
-                    onClick={async () => {
-                      const newMutedState = await toggleMuteConversation(
-                        activeConversation.id,
-                        CURRENT_USER.id,
-                        activeConversation.mutedUserIds
-                      );
-                      onShowToast(newMutedState ? 'Conversation muted' : 'Notifications unmuted');
-                    }}
-                    className="w-8 h-8 rounded-xl bg-[#1C1A1F] border border-[#26242C] text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                    title="Toggle Mute Notifications"
-                  >
-                    <span className="material-symbols-outlined text-sm">
-                      {activeConversation.mutedUserIds?.includes(CURRENT_USER.id)
-                        ? 'notifications_off'
-                        : 'notifications'}
-                    </span>
-                  </button>
-
-                  {activeConversation.type === 'group' && (
-                    <button
-                      onClick={() => setIsGroupInfoModalOpen(true)}
-                      className="w-8 h-8 rounded-xl bg-[#1C1A1F] border border-[#26242C] text-zinc-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                      title="Group Info & Settings"
-                    >
-                      <span className="material-symbols-outlined text-sm">info</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* IN-CHAT SEARCH BAR OVERLAY */}
-              <AnimatePresence>
-                {showInChatSearch && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="p-2.5 bg-[#121114]/90 border-b border-[#26242C] flex items-center gap-2"
-                  >
-                    <input
-                      type="text"
-                      value={inChatSearchQuery}
-                      onChange={(e) => setInChatSearchQuery(e.target.value)}
-                      placeholder="Search messages in this conversation..."
-                      className="flex-1 bg-[#1C1A1F] border border-[#26242C] rounded-xl px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#F05423]"
-                    />
-                    <button
-                      onClick={() => {
-                        setShowInChatSearch(false);
-                        setInChatSearchQuery('');
-                      }}
-                      className="text-xs text-zinc-400 hover:text-white px-2 cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* MESSAGES SCROLL AREA */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-                {filteredMessages.length === 0 ? (
-                  <div className="p-12 text-center space-y-2">
-                    <span className="material-symbols-outlined text-4xl text-zinc-600">chat</span>
-                    <h4 className="text-sm font-bold text-white">Start the conversation</h4>
-                    <p className="text-xs text-zinc-500">
-                      Send a greeting or share a place, quest, or trail attachment
-                    </p>
-                  </div>
-                ) : (
-                  filteredMessages.map((msg) => {
-                    const isMe = msg.senderId === CURRENT_USER.id;
-
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1 group`}
-                      >
-                        {/* Sender Name in Group Chat */}
-                        {!isMe && activeConversation.type === 'group' && (
-                          <span className="text-[10px] font-bold text-[#F05423] px-1">
-                            {msg.senderName}
+                  {/* ACTIVE TAB: HOME SCREEN SUMMARY */}
+                  {activeGroupTab === 'home' && (
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+                      
+                      {/* Active shared quest poster - Style C Hero */}
+                      <div className="bg-gradient-to-r from-kaos-orange to-kaos-yellow rounded-2xl p-5 border border-kaos-orange/15 shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="relative z-10">
+                          <span className="px-2 py-0.5 rounded bg-kaos-navy text-kaos-yellow text-[9px] font-mono font-bold uppercase">
+                            Active Group Quest Target
                           </span>
-                        )}
+                          <h4 className="text-sm font-black text-kaos-navy mt-1.5 uppercase leading-snug">
+                            "{activeConv.groupQuestName}"
+                          </h4>
+                          <p className="text-[11px] text-kaos-navy/90 mt-1 font-semibold">Decipher architectural alignments & unlock group points.</p>
+                        </div>
+                        <div className="relative z-10 shrink-0 text-center bg-kaos-navy/80 px-4 py-3.5 rounded-xl border border-kaos-yellow/20">
+                          <span className="text-[9px] font-bold text-text-secondary uppercase block">Progress</span>
+                          <span className="text-xl font-extrabold text-kaos-yellow font-mono mt-0.5 block">{activeConv.groupQuestProgress}%</span>
+                        </div>
+                      </div>
 
-                        <div className="flex items-center gap-2 max-w-[85%]">
-                          {/* Options menu button on hover */}
-                          {isMe && (
-                            <button
-                              onClick={() => setSelectedMsgForMenu(msg)}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-500 hover:text-white cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-xs">more_vert</span>
-                            </button>
-                          )}
-
-                          {/* Message Bubble Container */}
-                          <div
-                            className={`rounded-2xl p-3 text-xs leading-relaxed ${
-                              isMe
-                                ? 'bg-[#F05423] text-white rounded-tr-sm shadow-md'
-                                : 'bg-[#121114] border border-[#26242C] text-zinc-200 rounded-tl-sm'
-                            }`}
+                      {/* Members preview summary & chat buttons */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-surface-secondary border border-progress-track rounded-2xl p-4 space-y-3 shadow-md">
+                          <h4 className="text-xs font-bold text-text-secondary uppercase">Explorers Team Preview</h4>
+                          <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                            {currentGroupMembers.map((m) => (
+                              <div
+                                key={m.id}
+                                className="w-9 h-9 rounded-xl bg-surface-primary border border-progress-track flex items-center justify-center text-lg shadow-sm shrink-0 cursor-pointer"
+                                title={m.displayName}
+                                onClick={() => setViewingProfileUser(m)}
+                              >
+                                {m.avatar}
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => setActiveGroupTab('members')}
+                            className="w-full text-center py-2 rounded-xl bg-surface-primary hover:bg-surface-secondary text-text-secondary hover:text-kaos-offwhite border border-progress-track text-xs font-bold transition-all cursor-pointer"
                           >
-                            {/* Text Body */}
-                            {msg.text && <p className="whitespace-pre-wrap">{msg.text}</p>}
+                            Manage Faction Members
+                          </button>
+                        </div>
 
-                            {/* ATTACHMENT CARDS */}
-                            {msg.attachment && (
-                              <div className="mt-2 p-2.5 rounded-xl bg-black/30 border border-white/10 space-y-2">
-                                <div className="flex items-center gap-2.5">
-                                  {msg.attachment.imageUrl ? (
-                                    <img
-                                      src={msg.attachment.imageUrl}
-                                      alt={msg.attachment.title}
-                                      onClick={() => setLightboxImage(msg.attachment?.imageUrl || null)}
-                                      className="w-14 h-14 rounded-lg object-cover cursor-pointer border border-white/20 hover:scale-105 transition-transform"
-                                    />
-                                  ) : (
-                                    <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center text-white shrink-0">
-                                      <span className="material-symbols-outlined text-lg">
-                                        {msg.attachment.type === 'place'
-                                          ? 'location_on'
-                                          : msg.attachment.type === 'quest'
-                                          ? 'auto_awesome'
-                                          : msg.attachment.type === 'trail'
-                                          ? 'route'
-                                          : 'map'}
-                                      </span>
-                                    </div>
-                                  )}
+                        {/* Leaderboard Preview */}
+                        <div className="bg-surface-secondary border border-progress-track rounded-2xl p-4 space-y-3 shadow-md">
+                          <h4 className="text-xs font-bold text-text-secondary uppercase">Leaderboard #1 Champion</h4>
+                          {currentGroupMembers.length > 0 && (
+                            <div className="flex items-center gap-3">
+                              <div className="text-3xl">👑</div>
+                              <div>
+                                <span className="text-xs font-bold text-kaos-yellow block">
+                                  {currentGroupMembers.sort((a,b)=>b.xp-a.xp)[0].displayName}
+                                </span>
+                                <span className="text-[10px] text-text-secondary font-mono">
+                                  {currentGroupMembers.sort((a,b)=>b.xp-a.xp)[0].xp.toLocaleString()} XP
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                          <button
+                            onClick={() => setActiveGroupTab('leaderboard')}
+                            className="w-full text-center py-2 rounded-xl bg-surface-primary hover:bg-surface-secondary text-text-secondary hover:text-kaos-offwhite border border-progress-track text-xs font-bold transition-all cursor-pointer"
+                          >
+                            Inspect Full Standings
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                                  <div className="min-w-0 flex-1">
-                                    <span className="text-[9px] font-mono uppercase font-bold text-amber-300 block">
-                                      {msg.attachment.type} card
-                                    </span>
-                                    <h5 className="text-xs font-bold text-white truncate">
-                                      {msg.attachment.title}
-                                    </h5>
-                                    {msg.attachment.description && (
-                                      <p className="text-[10px] text-zinc-300 line-clamp-1">
-                                        {msg.attachment.description}
-                                      </p>
-                                    )}
+                  {/* ACTIVE TAB: CHAT ROOM */}
+                  {activeGroupTab === 'chat' && (
+                    <>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-primary/40">
+                        <AnimatePresence mode="popLayout">
+                          {(chatMessages[activeConv.id] || []).map((msg) => {
+                            const isMe = msg.senderId === 'me';
+                            return (
+                              <motion.div
+                                layout
+                                initial={{ opacity: 0, y: 15, scale: 0.96 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.92, y: -8 }}
+                                transition={{ duration: 0.22, ease: 'easeOut' }}
+                                key={msg.id}
+                                className={`flex gap-3 max-w-[80%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+                              >
+                                <div className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0">
+                                  {msg.senderAvatar}
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold text-kaos-offwhite">{msg.senderName}</span>
+                                    <span className="text-[8px] text-text-muted font-mono">{msg.timestamp}</span>
+                                  </div>
+                                  <div
+                                    className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                                      isMe
+                                        ? 'bg-kaos-purple text-white rounded-tr-none shadow-md'
+                                        : 'bg-surface-secondary text-kaos-offwhite rounded-tl-none border border-progress-track'
+                                    }`}
+                                  >
+                                    {msg.text}
+                                  </div>
+                                </div>
+                              </motion.div>
+                            );
+                          })}
+                        </AnimatePresence>
+                        <div ref={messageEndRef} />
+                      </div>
+
+                      <div className="p-4 border-t border-progress-track bg-background-secondary shrink-0">
+                        <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="Type a group message..."
+                            value={composeText}
+                            onChange={(e) => setComposeText(e.target.value)}
+                            className="flex-1 bg-surface-primary border border-progress-track rounded-xl px-4 py-2.5 text-xs text-kaos-offwhite focus:outline-none focus:border-kaos-purple"
+                          />
+                          <button
+                            type="submit"
+                            className="px-4 py-2.5 rounded-xl bg-kaos-purple text-white text-xs font-bold shadow-md cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-sm">send</span>
+                          </button>
+                        </form>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ACTIVE TAB: SQUAD QUEST TARGETS */}
+                  {activeGroupTab === 'quests' && (
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+                      <div className="bg-surface-secondary p-5 rounded-2xl border border-progress-track space-y-3 shadow-md">
+                        <span className="px-2 py-0.5 rounded bg-kaos-orange/15 border border-kaos-orange/30 text-kaos-orange text-[9px] font-mono font-bold uppercase">
+                          ACTIVE FACTION QUEST
+                        </span>
+                        <h4 className="text-sm font-black text-kaos-offwhite uppercase">"{activeConv.groupQuestName}"</h4>
+                        <p className="text-xs text-text-secondary leading-relaxed">
+                          Collaborate to check in geofenced map coordinates at Kapaleeshwarar Tank stepwell systems. Verification is validated socially in real-time.
+                        </p>
+
+                        <div className="space-y-1.5 pt-2">
+                          <div className="flex justify-between text-[10px] font-mono font-bold">
+                            <span>SQUAD VERIFICATION PROGRESS</span>
+                            <span className="text-kaos-orange">{activeConv.groupQuestProgress}%</span>
+                          </div>
+                          <div className="h-2.5 w-full bg-background-primary border border-progress-track rounded-full overflow-hidden">
+                            <div className="h-full bg-kaos-orange rounded-full transition-all" style={{ width: `${activeConv.groupQuestProgress}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ACTIVE TAB: LEADERBOARD */}
+                  {activeGroupTab === 'leaderboard' && (
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                      <div className="border-b border-progress-track pb-2">
+                        <h4 className="text-sm font-bold text-kaos-offwhite uppercase tracking-wider">Internal Standings</h4>
+                        <p className="text-xs text-text-secondary">Ranks updated automatically as group members complete quests.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        {currentGroupMembers
+                          .sort((a,b)=>b.xp-a.xp)
+                          .map((m,idx) => {
+                            const rank = idx + 1;
+                            const isMe = m.id === 'me';
+                            return (
+                              <div
+                                key={m.id}
+                                className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                                  isMe ? 'bg-surface-secondary border-kaos-teal/30' : 'bg-surface-secondary/40 border-progress-track'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className={`w-6 h-6 rounded-lg text-[10px] font-extrabold font-mono flex items-center justify-center shrink-0 ${
+                                    rank === 1 ? 'bg-kaos-yellow text-kaos-navy' : rank === 2 ? 'bg-text-secondary text-kaos-navy' : 'bg-surface-secondary text-text-secondary'
+                                  }`}>
+                                    #{rank}
+                                  </span>
+                                  <div className="w-8 h-8 rounded-xl bg-surface-primary border border-progress-track flex items-center justify-center text-sm">
+                                    {m.avatar}
+                                  </div>
+                                  <div>
+                                    <span className="font-bold text-kaos-offwhite block">{m.displayName}</span>
+                                    <span className="text-[9px] text-text-secondary">@{m.handle}</span>
                                   </div>
                                 </div>
 
-                                {/* Attachment Action Button */}
-                                {msg.attachment.type === 'place' && (
-                                  <button
-                                    onClick={() => {
-                                      const spotMatch = masterSpots.find((s) => s.id === msg.attachment?.id);
-                                      if (spotMatch && onSelectSpot) {
-                                        onSelectSpot(spotMatch);
-                                      } else {
-                                        onShowToast(`Opening ${msg.attachment?.title}...`);
-                                      }
-                                    }}
-                                    className="w-full py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white font-bold text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1"
-                                  >
-                                    <span>View Place</span>
-                                    <span className="material-symbols-outlined text-xs">arrow_forward</span>
-                                  </button>
-                                )}
-
-                                {msg.attachment.type === 'quest' && (
-                                  <button
-                                    onClick={() => {
-                                      if (onSelectQuest) onSelectQuest({ title: msg.attachment?.title });
-                                      onShowToast(`Quest "${msg.attachment?.title}" selected`);
-                                    }}
-                                    className="w-full py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1"
-                                  >
-                                    <span>Open Quest</span>
-                                    <span className="material-symbols-outlined text-xs">auto_awesome</span>
-                                  </button>
-                                )}
-
-                                {msg.attachment.type === 'map_location' && (
-                                  <button
-                                    onClick={() => {
-                                      if (onNavigateToMap) onNavigateToMap(13.0642, 80.2811);
-                                      onShowToast('Navigating to map coordinates');
-                                    }}
-                                    className="w-full py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1"
-                                  >
-                                    <span>View on AR Map</span>
-                                    <span className="material-symbols-outlined text-xs">view_in_ar</span>
-                                  </button>
-                                )}
+                                <div className="text-right">
+                                  <span className="font-bold text-kaos-yellow font-mono">{m.xp.toLocaleString()} XP</span>
+                                  {isMe && <span className="text-[8px] text-kaos-teal block font-mono">ACTIVE (YOU)</span>}
+                                </div>
                               </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ACTIVE TAB: MEMBERS PRIVILEGES */}
+                  {activeGroupTab === 'members' && (
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                      <div className="flex items-center justify-between border-b border-progress-track pb-2">
+                        <h4 className="text-sm font-bold text-kaos-offwhite uppercase tracking-wider">Members Directory</h4>
+                        <button
+                          onClick={() => {
+                            onShowToast('Group invitations dispatched!');
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-kaos-purple hover:bg-kaos-pink text-white text-xs font-black cursor-pointer shadow-md"
+                        >
+                          + Invite Team
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {currentGroupMembers.map((m) => (
+                          <div
+                            key={m.id}
+                            className="p-3 bg-surface-secondary border border-progress-track rounded-xl flex items-center justify-between gap-3"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-xl bg-surface-primary border border-progress-track flex items-center justify-center text-sm">
+                                {m.avatar}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold text-kaos-offwhite">{m.displayName}</span>
+                                  {m.role === 'Admin' && (
+                                    <span className="px-1.5 py-0.2 rounded bg-kaos-yellow text-kaos-navy text-[8px] font-black uppercase font-mono">
+                                      ADMIN / OWNER
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-text-secondary block">@{m.handle}</span>
+                              </div>
+                            </div>
+
+                            {CURRENT_USER.role === 'Admin' && m.id !== 'me' ? (
+                              <button
+                                onClick={() => setSelectedGroupMemberAction(m)}
+                                className="px-3 py-1.5 rounded-xl bg-transparent hover:bg-kaos-red/15 text-kaos-red border border-kaos-red/20 text-[10px] font-bold cursor-pointer transition-all"
+                              >
+                                Kick Member
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-text-secondary italic">Standard permissions</span>
                             )}
                           </div>
-
-                          {!isMe && (
-                            <button
-                              onClick={() => setSelectedMsgForMenu(msg)}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-zinc-500 hover:text-white cursor-pointer"
-                            >
-                              <span className="material-symbols-outlined text-xs">more_vert</span>
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Timestamp & Status Icon */}
-                        <div className="flex items-center gap-1 px-1 text-[9px] font-mono text-zinc-500">
-                          <span>
-                            {new Date(msg.createdAt).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                          {isMe && (
-                            <span className="material-symbols-outlined text-[12px] text-zinc-400">
-                              {msg.status === 'sending'
-                                ? 'schedule'
-                                : msg.status === 'read'
-                                ? 'done_all'
-                                : 'done'}
-                            </span>
-                          )}
-                        </div>
+                        ))}
                       </div>
-                    );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* PHOTO ATTACHMENT PREVIEW BANNER */}
-              {selectedPhotoPreview && (
-                <div className="p-3 bg-[#121114] border-t border-[#26242C] flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={selectedPhotoPreview}
-                      alt="Selected preview"
-                      className="w-12 h-12 rounded-xl object-cover border border-[#F05423]"
-                    />
-                    <div>
-                      <span className="text-[10px] font-mono text-[#F05423] font-bold block">
-                        Photo Ready
-                      </span>
-                      <p className="text-xs text-white">Press Send to post image</p>
                     </div>
-                  </div>
-                  <button
-                    onClick={() => setSelectedPhotoPreview(null)}
-                    className="text-zinc-400 hover:text-white text-xs cursor-pointer"
-                  >
-                    Remove
-                  </button>
+                  )}
+
+                  {/* ACTIVE TAB: ACTIVITY FEED */}
+                  {activeGroupTab === 'activity' && (
+                    <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                      <h4 className="text-sm font-bold text-kaos-offwhite uppercase tracking-wider">Meaningful group events</h4>
+                      <div className="space-y-2">
+                        {groupActivities.map((act, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 bg-surface-secondary border border-progress-track rounded-xl flex items-center gap-3 text-xs text-text-secondary shadow-md"
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full bg-kaos-lime shrink-0" />
+                            <span>{act}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-background-secondary">
+                  <span className="material-symbols-outlined text-4xl text-kaos-purple mb-2">diversity_3</span>
+                  <h4 className="text-sm font-bold text-kaos-offwhite">No group faction selected</h4>
+                  <p className="text-xs text-text-secondary mt-1">Select an active squad faction on the left sidebar to coordinate team targets.</p>
                 </div>
               )}
+            </div>
+          </>
+        )}
 
-              {/* QUICK ATTACHMENT TRAY */}
-              <AnimatePresence>
-                {showAttachmentMenu && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="p-3 bg-[#121114] border-t border-[#26242C] grid grid-cols-2 sm:grid-cols-4 gap-2"
-                  >
-                    <label className="p-2.5 rounded-2xl bg-[#1C1A1F] hover:bg-[#26242C] border border-[#26242C] flex items-center gap-2 text-xs text-white cursor-pointer transition-all">
-                      <span className="material-symbols-outlined text-[#F05423]">image</span>
-                      <span>Attach Photo</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handlePhotoFileSelect}
-                        className="hidden"
-                      />
-                    </label>
+      </div>
 
-                    {masterSpots[0] && (
-                      <button
-                        onClick={() => handleQuickAttachSpot(masterSpots[0])}
-                        className="p-2.5 rounded-2xl bg-[#1C1A1F] hover:bg-[#26242C] border border-[#26242C] flex items-center gap-2 text-xs text-white cursor-pointer transition-all truncate"
-                      >
-                        <span className="material-symbols-outlined text-amber-400">location_on</span>
-                        <span className="truncate">Share {masterSpots[0].title}</span>
-                      </button>
-                    )}
-
-                    <button
-                      onClick={handleQuickAttachLocation}
-                      className="p-2.5 rounded-2xl bg-[#1C1A1F] hover:bg-[#26242C] border border-[#26242C] flex items-center gap-2 text-xs text-white cursor-pointer transition-all"
-                    >
-                      <span className="material-symbols-outlined text-cyan-400">my_location</span>
-                      <span>Live GPS Map Pin</span>
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* CHAT INPUT COMPOSER */}
-              <form
-                onSubmit={handleSendMessage}
-                className="p-3 bg-[#121114] border-t border-[#26242C] flex items-center gap-2"
-              >
+      {/* OVERLAY A: FIND FRIENDS SEARCH DIALOG */}
+      <AnimatePresence>
+        {showFindFriends && (
+          <div
+            onClick={() => setShowFindFriends(false)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-sm font-black text-kaos-pink uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">person_add</span>
+                  <span>Find Explorers by Handle</span>
+                </h3>
                 <button
-                  type="button"
-                  onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
-                  className={`w-10 h-10 rounded-2xl border flex items-center justify-center transition-all cursor-pointer ${
-                    showAttachmentMenu
-                      ? 'bg-[#F05423] text-white border-[#F05423]'
-                      : 'bg-[#1C1A1F] border-[#26242C] text-zinc-400 hover:text-white'
-                  }`}
-                  title="Share attachments"
+                  onClick={() => {
+                    setFriendSearchInput('');
+                    setHandleError(null);
+                    setShowFindFriends(false);
+                  }}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-lg">add</span>
+                  ✕
                 </button>
+              </div>
 
-                <input
-                  type="text"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Write a message or share an exploration card..."
-                  className="flex-1 bg-[#1C1A1F] border border-[#26242C] rounded-2xl px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#F05423] transition-colors"
-                />
+              <form onSubmit={validateAndAddFriendByHandle} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-text-secondary uppercase">Unique Explorer Handle</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-3 text-xs text-text-secondary font-mono">@</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. priya_madrasi"
+                      value={friendSearchInput}
+                      onChange={(e) => setFriendSearchInput(e.target.value)}
+                      className="w-full bg-surface-secondary border border-progress-track focus:border-kaos-pink rounded-xl pl-8 pr-4 py-2.5 text-xs text-kaos-offwhite focus:outline-none placeholder-text-muted"
+                    />
+                  </div>
+                </div>
+
+                {handleError && (
+                  <p className="text-[11px] font-bold text-kaos-red bg-error-bg border border-kaos-red/20 p-2.5 rounded-lg flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-xs font-bold">error</span>
+                    <span>{handleError}</span>
+                  </p>
+                )}
 
                 <button
                   type="submit"
-                  disabled={!inputText.trim() && !selectedPhotoPreview}
-                  className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white text-xs font-bold transition-all cursor-pointer disabled:opacity-40 flex items-center gap-1.5 shadow-md"
+                  className="w-full text-center py-2.5 rounded-xl bg-kaos-pink hover:bg-kaos-purple text-white text-xs font-bold shadow-md transition-all cursor-pointer"
                 >
-                  <span>Send</span>
-                  <span className="material-symbols-outlined text-sm">send</span>
+                  Send Friend Request
                 </button>
               </form>
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3">
-              <div className="w-16 h-16 rounded-full bg-[#121114] border border-[#26242C] flex items-center justify-center text-[#F05423]">
-                <span className="material-symbols-outlined text-3xl">chat</span>
-              </div>
-              <h3 className="text-base font-bold text-white">No active conversation selected</h3>
-              <p className="text-xs text-zinc-400 max-w-sm">
-                Select a conversation from the list or start a new direct message or group chat.
-              </p>
-              <button
-                onClick={() => setIsNewChatModalOpen(true)}
-                className="px-4 py-2 rounded-xl bg-[#F05423] text-white text-xs font-bold hover:bg-[#d64a1e] transition-colors cursor-pointer"
-              >
-                Start New Chat
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-      {/* MODAL 1: NEW DIRECT CHAT MODAL */}
+      {/* OVERLAY B: PENDING REQUESTS DIALOG */}
       <AnimatePresence>
-        {isNewChatModalOpen && (
+        {showRequestsModal && (
           <div
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans"
-            onClick={() => setIsNewChatModalOpen(false)}
+            onClick={() => setShowRequestsModal(false)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           >
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl"
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
             >
-              <div className="flex items-center justify-between border-b border-[#26242C] pb-3">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#F05423]">chat</span>
-                  <span>Start New Chat</span>
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-sm font-black text-kaos-pink uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">person_add</span>
+                  <span>Friend Requests Received</span>
                 </h3>
                 <button
-                  onClick={() => setIsNewChatModalOpen(false)}
-                  className="text-zinc-400 hover:text-white cursor-pointer"
+                  onClick={() => setShowRequestsModal(false)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-sm">close</span>
+                  ✕
                 </button>
               </div>
 
-              <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin">
-                {EXPLORER_DIRECTORY.map((user) => (
-                  <button
-                    key={user.id}
-                    onClick={() => handleStartDirectChat(user)}
-                    className="w-full p-3 bg-[#121114] hover:bg-[#121114]/80 border border-[#26242C] rounded-2xl flex items-center justify-between transition-all text-left cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={user.avatarUrl}
-                        alt={user.displayName}
-                        className="w-10 h-10 rounded-full object-cover border border-[#26242C]"
-                      />
-                      <div>
-                        <h4 className="text-xs font-bold text-white">{user.displayName}</h4>
-                        <p className="text-[10px] text-zinc-400">{user.role}</p>
+              <div className="space-y-3">
+                {incomingRequests.length === 0 ? (
+                  <p className="text-xs text-text-secondary italic text-center py-4">No pending explorer invitations.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {incomingRequests.map((req) => (
+                      <div
+                        key={req.id}
+                        className="p-4 bg-surface-secondary border border-progress-track rounded-2xl flex items-center justify-between gap-4 shadow-md"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-surface-primary border border-progress-track flex items-center justify-center text-xl shrink-0">
+                            {req.sender.avatar}
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-kaos-offwhite block">{req.sender.displayName}</span>
+                            <span className="text-[10px] text-text-secondary">@{req.sender.handle} · Level {req.sender.level}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-xs font-bold shrink-0">
+                          <button
+                            onClick={() => handleDeclineRequest(req.id)}
+                            className="px-3 py-1.5 rounded-xl bg-surface-primary border border-progress-track text-text-secondary hover:text-kaos-offwhite cursor-pointer"
+                          >
+                            Decline
+                          </button>
+                          <button
+                            onClick={() => handleAcceptRequest(req.id, req.sender)}
+                            className="px-3.5 py-1.5 rounded-xl bg-kaos-pink text-white cursor-pointer hover:opacity-95"
+                          >
+                            Accept
+                          </button>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* OVERLAY C: SOCIAL NOTIFICATIONS LOGS */}
+      <AnimatePresence>
+        {showNotificationsModal && (
+          <div
+            onClick={() => setShowNotificationsModal(false)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-sm font-black text-kaos-yellow uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">notifications</span>
+                  <span>Social Activity Inbox</span>
+                </h3>
+                <button
+                  onClick={() => setShowNotificationsModal(false)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                {socialNotifications.map((not) => (
+                  <div
+                    key={not.id}
+                    className={`p-3 border rounded-xl shadow-sm text-xs leading-relaxed ${not.colorClass}`}
+                  >
+                    <div className="flex items-center justify-between gap-2 font-bold mb-1">
+                      <span>{not.title}</span>
+                      <span className="text-[9.5px] opacity-75 font-mono">{not.time}</span>
                     </div>
-                    <span className="material-symbols-outlined text-sm text-[#F05423]">send</span>
-                  </button>
+                    <p className="opacity-95">{not.text}</p>
+                  </div>
                 ))}
               </div>
             </motion.div>
@@ -840,102 +1485,364 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
         )}
       </AnimatePresence>
 
-      {/* MODAL 2: NEW GROUP CHAT MODAL */}
+      {/* OVERLAY D: SAFETY CONFIG */}
       <AnimatePresence>
-        {isNewGroupModalOpen && (
+        {showPrivacyModal && (
           <div
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans"
-            onClick={() => setIsNewGroupModalOpen(false)}
+            onClick={() => setShowPrivacyModal(false)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           >
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl"
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
             >
-              <div className="flex items-center justify-between border-b border-[#26242C] pb-3">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#F05423]">group_add</span>
-                  <span>Create Group Chat</span>
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-sm font-black text-kaos-red uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined">shield_lock</span>
+                  <span>Safety & Privacy Center</span>
                 </h3>
                 <button
-                  onClick={() => setIsNewGroupModalOpen(false)}
-                  className="text-zinc-400 hover:text-white cursor-pointer"
+                  onClick={() => setShowPrivacyModal(false)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-sm">close</span>
+                  ✕
                 </button>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-text-secondary uppercase">Blocked Users List</h4>
+                  {blockedUsers.length === 0 ? (
+                    <p className="text-xs text-text-secondary italic">Zero blocked explorers on your list.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {blockedUsers.map((b) => (
+                        <div
+                          key={b.id}
+                          className="p-2.5 bg-surface-secondary border border-progress-track rounded-xl flex items-center justify-between gap-3 text-xs shadow-sm"
+                        >
+                          <span>{b.displayName} (@{b.handle})</span>
+                          <button
+                            onClick={() => handleUnblockUser(b.id)}
+                            className="px-2.5 py-1 rounded bg-surface-primary hover:bg-kaos-teal hover:text-kaos-navy text-kaos-teal text-[10px] font-bold border border-kaos-teal/20"
+                          >
+                            Unblock
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 bg-surface-secondary rounded-xl text-[11px] text-text-secondary leading-relaxed border border-progress-track">
+                  Your current physical GPS coordinates, primary phone number, and explorer contact logs are strictly secured and never broadcasted to non-mutual contacts. Explore privately!
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 1: VIEW PROFILE */}
+      <AnimatePresence>
+        {viewingProfileUser && (
+          <div
+            onClick={() => setViewingProfileUser(null)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-5 shadow-2xl flex flex-col"
+            >
+              <div className="flex items-center justify-between border-b border-progress-track pb-3 shrink-0">
+                <h3 className="text-sm font-bold text-kaos-offwhite flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-kaos-pink animate-pulse">badge</span>
+                  <span>Explorer Credentials</span>
+                </h3>
+                <button
+                  onClick={() => setViewingProfileUser(null)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-3xl shadow-lg shrink-0">
+                  {viewingProfileUser.avatar}
+                </div>
                 <div>
-                  <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                    Group Name
-                  </label>
-                  <input
-                    type="text"
-                    value={groupName}
-                    onChange={(e) => setGroupName(e.target.value)}
-                    placeholder="e.g. Triplicane Coffee Pioneers"
-                    className="w-full bg-[#121114] border border-[#26242C] rounded-2xl px-3.5 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#F05423]"
+                  <h4 className="text-base font-extrabold text-kaos-offwhite">{viewingProfileUser.displayName}</h4>
+                  <p className="text-xs text-text-secondary">@{viewingProfileUser.handle}</p>
+                  <p className="text-[10px] font-bold text-kaos-pink font-mono mt-2 uppercase tracking-wider bg-surface-secondary border border-kaos-pink/20 px-2.5 py-1 rounded-full w-fit">
+                    {viewingProfileUser.badge}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-xs text-text-secondary leading-relaxed bg-surface-secondary p-4 rounded-2xl border border-progress-track shadow-inner">
+                <p className="italic">"{viewingProfileUser.bio}"</p>
+                <div className="grid grid-cols-2 gap-2 border-t border-progress-track/60 pt-2 text-[10px] font-mono">
+                  <p>🏛️ QUESTS COMPLETED: <span className="font-bold text-kaos-offwhite">{viewingProfileUser.questsCompleted}</span></p>
+                  <p>⭐ LEVEL ACHIEVED: <span className="font-bold text-kaos-yellow">Lv {viewingProfileUser.level}</span></p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 text-xs pt-2">
+                <button
+                  onClick={() => {
+                    setReportingUser(viewingProfileUser);
+                    setViewingProfileUser(null);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-transparent border border-kaos-red/30 text-kaos-red hover:text-kaos-offwhite hover:bg-kaos-red font-bold cursor-pointer"
+                >
+                  Report Explorer
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleBlockUser(viewingProfileUser)}
+                    className="px-3.5 py-2 rounded-xl bg-surface-secondary border border-progress-track text-text-secondary hover:text-kaos-offwhite font-bold cursor-pointer"
+                  >
+                    Block
+                  </button>
+
+                  <button
+                    onClick={() => handleRemoveFriend(viewingProfileUser.id)}
+                    className="px-4 py-2 rounded-xl bg-kaos-red text-white font-bold cursor-pointer hover:opacity-95"
+                  >
+                    Remove Friend
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 2: SAFETY REPORT */}
+      <AnimatePresence>
+        {reportingUser && (
+          <div
+            onClick={() => setReportingUser(null)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-sm font-bold text-kaos-offwhite flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-kaos-red">gavel</span>
+                  <span>Submit Safety Incident Report</span>
+                </h3>
+                <button
+                  onClick={() => setReportingUser(null)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitReport} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-secondary uppercase font-bold">Reporting User</label>
+                  <p className="text-xs font-bold text-kaos-offwhite bg-surface-secondary p-2.5 rounded-xl border border-progress-track">
+                    {reportingUser.displayName} (@{reportingUser.handle})
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-secondary uppercase font-bold">Report Reason Category</label>
+                  <select
+                    value={reportCategory}
+                    onChange={(e) => setReportCategory(e.target.value)}
+                    className="w-full bg-surface-secondary border border-progress-track rounded-xl px-3 py-2 text-xs text-kaos-offwhite focus:outline-none focus:border-kaos-pink"
+                  >
+                    <option value="Spam">Spam / Bots</option>
+                    <option value="Harassment">Harassment / Bullying</option>
+                    <option value="Inappropriate">Inappropriate Geo-evidence upload</option>
+                    <option value="Impersonation">Impersonation</option>
+                    <option value="Other">Other Issues</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-secondary uppercase font-bold">Details (Optional)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide additional details regarding safety violations..."
+                    value={reportDesc}
+                    onChange={(e) => setReportDesc(e.target.value)}
+                    className="w-full bg-surface-secondary border border-progress-track rounded-xl px-3 py-2.5 text-xs text-kaos-offwhite focus:outline-none resize-none"
                   />
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-mono text-zinc-400 uppercase block mb-1">
-                    Select Members
-                  </label>
-                  <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-                    {EXPLORER_DIRECTORY.map((user) => {
-                      const isSelected = selectedUserIdsForGroup.includes(user.id);
+                <p className="text-[10px] text-text-secondary italic">
+                  *Your identity will remain 100% confidential. Submitted reports are evaluated by faction server-moderators.
+                </p>
+
+                <div className="pt-2 flex items-center justify-end gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setReportingUser(null)}
+                    className="px-4 py-2 rounded-xl bg-surface-secondary border border-progress-track text-text-secondary font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-kaos-red text-white font-bold cursor-pointer hover:opacity-95"
+                  >
+                    Submit Confidential Report
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 3: CREATE GROUP */}
+      <AnimatePresence>
+        {showCreateGroupModal && (
+          <div
+            onClick={() => setShowCreateGroupModal(false)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 font-sans select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-progress-track pb-3">
+                <h3 className="text-base font-bold text-kaos-offwhite flex items-center gap-2">
+                  <span className="material-symbols-outlined text-kaos-purple">groups</span>
+                  <span>Form Faction Group Chat</span>
+                </h3>
+                <button
+                  onClick={() => setShowCreateGroupModal(false)}
+                  className="text-text-muted hover:text-kaos-offwhite cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleConfirmCreateGroup} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] text-text-secondary uppercase font-bold">Group Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Madras peaberry alliance"
+                    value={groupNameInput}
+                    onChange={(e) => setGroupNameInput(e.target.value)}
+                    className="w-full bg-surface-secondary border border-progress-track focus:border-kaos-purple rounded-xl px-3 py-2.5 text-xs text-kaos-offwhite focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] text-text-secondary uppercase font-bold">Invite Initial Members</label>
+                  <div className="max-h-36 overflow-y-auto border border-progress-track rounded-xl p-2.5 bg-surface-secondary space-y-1.5">
+                    {myFriends.map((friend) => {
+                      const selected = selectedFriendsForGroup.includes(friend.id);
                       return (
                         <button
-                          key={user.id}
+                          key={friend.id}
+                          type="button"
                           onClick={() => {
-                            if (isSelected) {
-                              setSelectedUserIdsForGroup(
-                                selectedUserIdsForGroup.filter((id) => id !== user.id)
-                              );
+                            if (selected) {
+                              setSelectedFriendsForGroup((prev) => prev.filter((id) => id !== friend.id));
                             } else {
-                              setSelectedUserIdsForGroup([...selectedUserIdsForGroup, user.id]);
+                              setSelectedFriendsForGroup((prev) => [...prev, friend.id]);
                             }
                           }}
-                          className={`w-full p-2.5 rounded-2xl border text-left flex items-center justify-between cursor-pointer transition-all ${
-                            isSelected
-                              ? 'bg-[#F05423]/10 border-[#F05423] text-white'
-                              : 'bg-[#121114] border-[#26242C] text-zinc-400 hover:text-zinc-200'
+                          className={`w-full p-2 rounded-lg text-left text-xs flex items-center justify-between gap-2 cursor-pointer ${
+                            selected ? 'bg-kaos-pink/15 text-kaos-pink font-bold' : 'hover:bg-surface-primary'
                           }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <img
-                              src={user.avatarUrl}
-                              alt={user.displayName}
-                              className="w-8 h-8 rounded-full object-cover"
-                            />
-                            <span className="text-xs font-bold">{user.displayName}</span>
+                          <div className="flex items-center gap-2">
+                            <span>{friend.avatar}</span>
+                            <span>{friend.displayName} (@{friend.handle})</span>
                           </div>
                           <span className="material-symbols-outlined text-sm">
-                            {isSelected ? 'check_box' : 'checkbox_outline_blank'}
+                            {selected ? 'check_box' : 'check_box_outline_blank'}
                           </span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateGroupModal(false)}
+                    className="px-4 py-2 rounded-xl bg-surface-secondary border border-progress-track text-text-secondary font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-kaos-pink text-white font-bold cursor-pointer hover:opacity-95 animate-pulse"
+                  >
+                    Form Group Chat
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL 4: MEMBER ACTION */}
+      <AnimatePresence>
+        {selectedGroupMemberAction && (
+          <div
+            onClick={() => setSelectedGroupMemberAction(null)}
+            className="fixed inset-0 bg-kaos-navy/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-primary border border-progress-track rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl text-center"
+            >
+              <div className="w-12 h-12 rounded-full bg-error-bg text-kaos-red flex items-center justify-center mx-auto text-xl">
+                ⚠️
+              </div>
+              <div className="space-y-1.5">
+                <h4 className="text-sm font-bold text-kaos-offwhite">Remove Surveyor From Faction?</h4>
+                <p className="text-xs text-text-secondary">
+                  Are you sure you want to remove **{selectedGroupMemberAction.displayName}** from "{activeConv?.name}"? They will lose access to team quests immediately.
+                </p>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-[#26242C]">
+              <div className="flex items-center justify-center gap-2 text-xs font-bold pt-1">
                 <button
-                  onClick={() => setIsNewGroupModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-[#121114] border border-[#26242C] text-zinc-400 text-xs font-bold cursor-pointer"
+                  onClick={() => setSelectedGroupMemberAction(null)}
+                  className="px-4 py-2 rounded-xl bg-surface-secondary border border-progress-track text-text-secondary cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleCreateGroup}
-                  className="px-5 py-2 rounded-xl bg-[#F05423] text-white text-xs font-bold hover:bg-[#d64a1e] transition-colors cursor-pointer"
+                  onClick={() => handleKickMember(selectedGroupMemberAction.id, activeConv?.name || 'group')}
+                  className="px-4 py-2 rounded-xl bg-kaos-red text-white cursor-pointer hover:opacity-95"
                 >
-                  Create Group
+                  Yes, Remove Member
                 </button>
               </div>
             </motion.div>
@@ -943,179 +1850,8 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
         )}
       </AnimatePresence>
 
-      {/* MODAL 3: GROUP INFO & MANAGEMENT MODAL */}
-      <AnimatePresence>
-        {isGroupInfoModalOpen && activeConversation && activeConversation.type === 'group' && (
-          <div
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans"
-            onClick={() => setIsGroupInfoModalOpen(false)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl"
-            >
-              <div className="flex items-center justify-between border-b border-[#26242C] pb-3">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[#F05423]">info</span>
-                  <span>Group Settings</span>
-                </h3>
-                <button
-                  onClick={() => setIsGroupInfoModalOpen(false)}
-                  className="text-zinc-400 hover:text-white cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-sm">close</span>
-                </button>
-              </div>
-
-              <div className="text-center space-y-2">
-                <img
-                  src={activeConversation.imageUrl}
-                  alt={activeConversation.name}
-                  className="w-16 h-16 rounded-2xl object-cover mx-auto border border-[#26242C]"
-                />
-                <h4 className="text-base font-bold text-white">{activeConversation.name}</h4>
-                <p className="text-xs text-zinc-400 font-mono">
-                  {activeConversation.participantIds.length} members
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <h5 className="text-[10px] font-mono text-zinc-400 uppercase">Members List</h5>
-                <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-                  {activeConversation.participantIds.map((pId) => {
-                    const matchedUser = EXPLORER_DIRECTORY.find((u) => u.id === pId) || {
-                      id: pId,
-                      displayName: pId === CURRENT_USER.id ? 'You (Admin)' : 'Group Member',
-                      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-                    };
-
-                    return (
-                      <div
-                        key={pId}
-                        className="p-2.5 bg-[#121114] border border-[#26242C] rounded-2xl flex items-center justify-between"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={matchedUser.avatarUrl}
-                            alt={matchedUser.displayName}
-                            className="w-8 h-8 rounded-full object-cover"
-                          />
-                          <span className="text-xs font-bold text-white">
-                            {matchedUser.displayName}
-                          </span>
-                        </div>
-
-                        {pId !== CURRENT_USER.id &&
-                          activeConversation.createdBy === CURRENT_USER.id && (
-                            <button
-                              onClick={async () => {
-                                await removeMemberFromGroup(activeConversation.id, pId);
-                                onShowToast('Member removed');
-                              }}
-                              className="text-xs text-rose-400 hover:text-rose-300 cursor-pointer font-bold"
-                            >
-                              Remove
-                            </button>
-                          )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-[#26242C] flex justify-between">
-                <button
-                  onClick={async () => {
-                    await leaveGroup(activeConversation.id, CURRENT_USER.id);
-                    setIsGroupInfoModalOpen(false);
-                    setActiveConvId(null);
-                    onShowToast('You left the group');
-                  }}
-                  className="px-4 py-2 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-400 text-xs font-bold cursor-pointer hover:bg-rose-500/30 transition-colors"
-                >
-                  Leave Group
-                </button>
-                <button
-                  onClick={() => setIsGroupInfoModalOpen(false)}
-                  className="px-5 py-2 rounded-xl bg-[#F05423] text-white text-xs font-bold cursor-pointer"
-                >
-                  Done
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* MODAL 4: MESSAGE OPTIONS POPUP */}
-      <AnimatePresence>
-        {selectedMsgForMenu && (
-          <div
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 font-sans"
-            onClick={() => setSelectedMsgForMenu(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-[#1C1A1F] border border-[#26242C] rounded-2xl w-full max-w-xs p-3 space-y-2 shadow-2xl"
-            >
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(selectedMsgForMenu.text);
-                  onShowToast('Text copied to clipboard!');
-                  setSelectedMsgForMenu(null);
-                }}
-                className="w-full p-2.5 rounded-xl hover:bg-[#26242C] text-left text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-sm">content_copy</span>
-                <span>Copy Message</span>
-              </button>
-
-              {selectedMsgForMenu.senderId === CURRENT_USER.id && activeConvId && (
-                <button
-                  onClick={async () => {
-                    await deleteMessage(activeConvId, selectedMsgForMenu.id);
-                    onShowToast('Message deleted');
-                    setSelectedMsgForMenu(null);
-                  }}
-                  className="w-full p-2.5 rounded-xl hover:bg-rose-500/20 text-left text-xs font-bold text-rose-400 flex items-center gap-2 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-sm">delete</span>
-                  <span>Delete Message</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => setSelectedMsgForMenu(null)}
-                className="w-full p-2 rounded-xl bg-[#121114] text-center text-xs font-bold text-zinc-400 cursor-pointer"
-              >
-                Cancel
-              </button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* LIGHTBOX EXPANDED IMAGE MODAL */}
-      <AnimatePresence>
-        {lightboxImage && (
-          <div
-            className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
-            onClick={() => setLightboxImage(null)}
-          >
-            <img
-              src={lightboxImage}
-              alt="Expanded view"
-              className="max-w-full max-h-[90vh] rounded-2xl object-contain border border-white/20"
-            />
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };
+
+export default MessagesScreen;

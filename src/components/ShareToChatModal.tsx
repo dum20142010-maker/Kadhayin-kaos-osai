@@ -77,16 +77,16 @@ export const ShareToChatModal: React.FC<ShareToChatModalProps> = ({
   const handleStartDirectAndShare = async (user: ChatUser) => {
     setSending(true);
     try {
-      const conv = await createDirectConversation(CURRENT_USER.id, user);
+      const convRef = await createDirectConversation(CURRENT_USER.id, user);
       await sendMessage(
-        conv.id,
+        convRef.id,
         CURRENT_USER,
         customComment.trim() || `Shared a ${attachment.type}: ${attachment.title}`,
         attachment
       );
       onShowToast(`Shared "${attachment.title}" with ${user.displayName}!`);
       if (onNavigateToChat) {
-        onNavigateToChat(conv.id);
+        onNavigateToChat(convRef.id);
       }
       onClose();
     } catch (e) {

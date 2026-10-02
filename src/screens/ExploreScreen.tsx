@@ -3,6 +3,8 @@ import { Map, AdvancedMarker, Pin, InfoWindow } from '@vis.gl/react-google-maps'
 import { KAOS_SPOTS } from '../data/kaosData';
 import { MasterSpot } from '../types';
 import { DailyQuests } from '../components/DailyQuests';
+import { ArCompassWidget } from '../components/ArCompassWidget';
+import { GeoProximityNotifier } from '../components/GeoProximityNotifier';
 
 interface ExploreScreenProps {
   onSpotSelected: (spot: MasterSpot) => void;
@@ -141,6 +143,22 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             <div className="lg:col-span-12">
               <DailyQuests
                 onAwardXp={onAwardXp}
+                onSpotSelected={onSpotSelected}
+                onShowToast={onShowToast}
+              />
+            </div>
+
+            {/* AR Heritage Compass Radar Widget */}
+            <div className="lg:col-span-12">
+              <ArCompassWidget
+                onSpotSelected={onSpotSelected}
+                onShowToast={onShowToast}
+              />
+            </div>
+
+            {/* Geolocation Proximity Notifier & Background Radar */}
+            <div className="lg:col-span-12">
+              <GeoProximityNotifier
                 onSpotSelected={onSpotSelected}
                 onShowToast={onShowToast}
               />

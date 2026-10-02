@@ -34,11 +34,13 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const navLinks = [
+    { key: 'home' as TabType, label: 'Home' },
     { key: 'explore' as TabType, label: 'Explore' },
     { key: 'map' as TabType, label: 'AR Radar' },
+    { key: 'squads' as TabType, label: 'Squads' },
     { key: 'assistant' as TabType, label: 'KAOS Bot' },
     { key: 'messages' as TabType, label: 'Messages' },
-    { key: 'social' as TabType, label: 'Social' },
+    { key: 'friends' as TabType, label: 'Friends' },
     { key: 'profile' as TabType, label: 'Passport' },
   ];
 

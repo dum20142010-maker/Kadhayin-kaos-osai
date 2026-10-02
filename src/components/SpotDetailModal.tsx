@@ -4,6 +4,7 @@ import { SpotShareModal } from './SpotShareModal';
 import { useSoundscape } from '../context/SoundscapeContext';
 import { sqlDb } from '../lib/sqlDatabase';
 import { ChatAttachment } from '../types/chat';
+import { useMapsLibrary } from '@vis.gl/react-google-maps';
 
 interface SpotDetailModalProps {
   spot: MasterSpot | null;
@@ -30,6 +31,47 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
       setIsSaved(sqlDb.isSpotSaved(spot.id));
     }
   }, [spot]);
+
+  const [placePhotos, setPlacePhotos] = useState<string[]>([]);
+  const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
+  const placesLibrary = useMapsLibrary('places');
+
+  useEffect(() => {
+    if (!spot) return;
+    const fallbacks = [
+      spot.imageUrl,
+      'https://images.unsplash.com/photo-1596422846543-75c6fc18a593?q=80&w=600&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?q=80&w=600&auto=format&fit=crop',
+      'https://images.unsplash.com/photo-1545235621-3f6b76649e78?q=80&w=600&auto=format&fit=crop'
+    ];
+    setPlacePhotos(fallbacks);
+
+    if (!placesLibrary || !(window as any).google) return;
+
+    setIsLoadingPhotos(true);
+    try {
+      const dummyDiv = document.createElement('div');
+      const service = new google.maps.places.PlacesService(dummyDiv);
+      const request = {
+        query: `${spot.title}, ${spot.zone}, Chennai, Tamil Nadu`,
+      };
+
+      service.textSearch(request, (results, status) => {
+        setIsLoadingPhotos(false);
+        if (status === google.maps.places.PlacesServiceStatus.OK && results && results[0] && results[0].photos) {
+          const fetchedUrls = results[0].photos.slice(0, 6).map((photo: any) =>
+            photo.getUrl({ maxWidth: 800, maxHeight: 600 })
+          );
+          if (fetchedUrls.length > 0) {
+            setPlacePhotos([spot.imageUrl, ...fetchedUrls]);
+          }
+        }
+      });
+    } catch (err) {
+      setIsLoadingPhotos(false);
+      console.warn('Google Places API photo fetch error:', err);
+    }
+  }, [spot, placesLibrary]);
 
   // Clean up speech synthesis when modal closes
   useEffect(() => {
@@ -234,6 +276,38 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
                 </span>
                 <span>{isSpeaking ? 'Pause Audio Guide Narration' : 'Listen to Spoken Voice Guide'}</span>
               </button>
+            </div>
+
+            {/* Horizontal Scrollable Photo Gallery (Google Places Imagery) */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-[#F05423] uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm">photo_library</span>
+                  <span>Google Places Photo Gallery</span>
+                </h3>
+                {isLoadingPhotos && (
+                  <span className="text-[10px] text-zinc-400 animate-pulse">Fetching Google Places photos...</span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                {placePhotos.map((photoUrl, pIdx) => (
+                  <div
+                    key={pIdx}
+                    className="relative shrink-0 w-36 h-24 rounded-2xl overflow-hidden border border-[#26242C] shadow-md group cursor-pointer"
+                  >
+                    <img
+                      src={photoUrl}
+                      alt={`${spot.title} photo ${pIdx + 1}`}
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors" />
+                    <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] text-zinc-300 font-mono">
+                      {pIdx === 0 ? 'Primary' : `Photo ${pIdx}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Full Story */}

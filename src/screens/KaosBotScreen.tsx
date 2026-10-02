@@ -46,6 +46,61 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
     }
   }, [messages, loading]);
 
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  const startRecording = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      onShowToast('Speech Recognition is not supported in this browser.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-IN';
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+        onShowToast('Listening... Speak your message now.');
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setInputText(transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error', event.error);
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Speech recognition failed to start:', err);
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      setIsRecording(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
@@ -76,18 +131,16 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
   return (
     <div className="pb-24 p-3 md:p-8 max-w-6xl mx-auto h-[calc(100vh-120px)] flex flex-col font-sans select-none">
       {/* Upper Title banner with Active Context HUD */}
-      <div className="border-b border-[#26242C] pb-4 mb-4 shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-5 md:p-6 shadow-2xl mb-4 shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <h2 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
-              <span className="material-symbols-outlined text-[#F05423]">smart_toy</span>
-              <span>KAOS Bot</span>
-            </h2>
+            <span className="material-symbols-outlined text-purple-400 text-2xl">smart_toy</span>
+            <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">KAOS AI Companion</h2>
 
             {/* Context-Aware Gemini AI Badge */}
-            <span className="px-2.5 py-1 rounded-full bg-gradient-to-r from-orange-500/20 via-amber-500/20 to-cyan-500/20 border border-[#F05423]/40 text-amber-300 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#F05423] animate-ping" />
-              <span>Context-Aware Gemini AI</span>
+            <span className="px-2.5 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+              <span>Gemini Neural AI</span>
             </span>
           </div>
 
@@ -99,7 +152,7 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
         {/* Live Context Chip */}
         <div className="flex items-center gap-2 flex-wrap">
           {activeSpot ? (
-            <div className="flex items-center gap-2 bg-[#1C1A1F] border border-[#F05423]/50 px-3 py-1.5 rounded-xl text-xs shadow-md">
+            <div className="flex items-center gap-2 bg-[#121114] border border-[#F05423]/50 px-3 py-1.5 rounded-xl text-xs shadow-md">
               <span className="text-[#F05423] font-mono text-[10px] uppercase font-bold flex items-center gap-1">
                 <span className="material-symbols-outlined text-xs">location_on</span>
                 Focused Landmark:
@@ -107,7 +160,7 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
               <span className="text-white font-bold truncate max-w-[180px]">{activeSpot.title}</span>
             </div>
           ) : activeQuest ? (
-            <div className="flex items-center gap-2 bg-[#1C1A1F] border border-cyan-500/50 px-3 py-1.5 rounded-xl text-xs shadow-md">
+            <div className="flex items-center gap-2 bg-[#121114] border border-cyan-500/50 px-3 py-1.5 rounded-xl text-xs shadow-md">
               <span className="text-cyan-400 font-mono text-[10px] uppercase font-bold flex items-center gap-1">
                 <span className="material-symbols-outlined text-xs">auto_awesome</span>
                 Active Quest:
@@ -115,7 +168,7 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
               <span className="text-white font-bold truncate max-w-[180px]">{activeQuest.title}</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2 bg-[#1C1A1F] border border-[#26242C] px-3 py-1.5 rounded-xl text-xs">
+            <div className="flex items-center gap-2 bg-[#121114] border border-[#26242C] px-3 py-1.5 rounded-xl text-xs">
               <span className="text-emerald-400 font-mono text-[10px] uppercase font-bold flex items-center gap-1">
                 <span className="material-symbols-outlined text-xs">explore</span>
                 Active Screen:
@@ -154,8 +207,8 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
                   <div
                     className={`max-w-[88%] md:max-w-[80%] rounded-2xl px-4 py-3.5 text-xs leading-relaxed ${
                       isBot
-                        ? 'bg-[#121114] border border-[#26242C] text-zinc-200 rounded-tl-sm shadow-sm'
-                        : 'bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white rounded-tr-sm shadow-md'
+                        ? 'bg-[#121114] border border-purple-500/20 text-zinc-200 rounded-tl-sm shadow-sm'
+                        : 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-tr-sm shadow-md'
                     }`}
                   >
                     {/* Render Formatted Markdown Body */}
@@ -180,9 +233,9 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
             })}
 
             {loading && (
-              <div className="flex items-center gap-2.5 text-xs text-[#F05423] font-mono p-3 bg-[#121114] border border-[#26242C] rounded-2xl w-fit animate-pulse">
+              <div className="flex items-center gap-2.5 text-xs text-purple-400 font-mono p-3 bg-[#121114] border border-purple-500/30 rounded-2xl w-fit animate-pulse">
                 <span className="material-symbols-outlined text-base animate-spin">smart_toy</span>
-                <span>KAOS Bot is evaluating application context & historical vault...</span>
+                <span>KAOS AI Companion is evaluating application context & historical vault...</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -218,9 +271,28 @@ export const KaosBotScreen: React.FC<KaosBotScreenProps> = ({
               className="flex-1 bg-[#1C1A1F] border border-[#26242C] rounded-2xl px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#F05423] transition-colors"
             />
             <button
+              type="button"
+              onMouseDown={startRecording}
+              onMouseUp={stopRecording}
+              onMouseLeave={stopRecording}
+              onTouchStart={startRecording}
+              onTouchEnd={stopRecording}
+              title="Hold to Record Voice Message"
+              className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border select-none shrink-0 ${
+                isRecording
+                  ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse'
+                  : 'bg-[#1C1A1F] border-[#26242C] text-zinc-300 hover:text-white hover:border-[#F05423]'
+              }`}
+            >
+              <span className="material-symbols-outlined text-sm">
+                {isRecording ? 'mic' : 'mic_none'}
+              </span>
+              <span className="hidden md:inline">{isRecording ? 'Recording...' : 'Hold to Record'}</span>
+            </button>
+            <button
               type="submit"
               disabled={loading || !inputText.trim()}
-              className="px-5 py-2.5 bg-gradient-to-r from-[#F05423] to-[#FF8A00] hover:opacity-95 text-white rounded-2xl text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2.5 bg-gradient-to-r from-[#F05423] to-[#FF8A00] hover:opacity-95 text-white rounded-2xl text-xs font-bold transition-all cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5 shrink-0"
             >
               <span>Ask</span>
               <span className="material-symbols-outlined text-sm">send</span>

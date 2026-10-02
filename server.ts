@@ -115,11 +115,12 @@ How may I assist your exploration today?`;
       return res.json({ reply: offlineReply, text: offlineReply });
     }
 
-    // Initialize GoogleGenerativeAI SDK
+    // Initialize GoogleGenerativeAI SDK with Google Search Grounding
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       systemInstruction: kaosSystemInstruction,
+      tools: [{ googleSearch: {} }] as any,
     });
 
     // Query local database context if relevant
@@ -274,6 +275,33 @@ Return valid JSON with:
   } catch (err: any) {
     console.error('Photo verification error:', err);
     res.status(500).json({ error: err?.message || 'Photo verification failed' });
+  }
+});
+
+// Audio Transcription endpoint using gemini-3.5-transcribe
+app.post('/api/kaos/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Gemini API Key missing' });
+    }
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.5-transcribe' });
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          data: audioBase64,
+          mimeType: mimeType || 'audio/webm',
+        },
+      },
+      'Transcribe this voice recording accurately into text for the KAOS heritage exploration assistant.',
+    ]);
+    const transcript = result.response.text();
+    return res.json({ transcript });
+  } catch (err: any) {
+    console.error('Transcription error:', err);
+    return res.status(500).json({ error: err?.message || 'Transcription failed' });
   }
 });
 

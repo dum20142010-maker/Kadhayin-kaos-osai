@@ -32,7 +32,60 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [recentSearches, setRecentSearches] = useState<SearchHistoryItem[]>([]);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const startVoiceSearch = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech Recognition is not supported in this browser.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-IN';
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        setQuery(transcript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Voice search failed to start:', err);
+      setIsListening(false);
+    }
+  };
+
+  const stopVoiceSearch = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      setIsListening(false);
+    }
+  };
 
   // Load latest search history from SQL whenever modal is opened
   useEffect(() => {
@@ -86,11 +139,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {
         id: 'nav-social',
         category: 'Navigation',
-        title: 'Social Squad & Feed',
-        subtitle: 'Browse discovered stories, friends activity, and rankings',
+        title: 'Community & Squad Feed',
+        subtitle: 'Browse discovered stories, global rankings, and friends',
         icon: 'groups',
         action: () => {
-          onNavigateTab('social');
+          onNavigateTab('messages');
           onClose();
         },
       },
@@ -213,18 +266,32 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Type a command, landmark name, or zone (e.g. Mylapore)..."
+            placeholder={isListening ? 'Listening for voice command...' : 'Type a command, landmark name, or zone (e.g. Mylapore)...'}
             className="w-full bg-transparent text-sm text-white placeholder-zinc-500 focus:outline-none font-medium"
           />
+          <button
+            type="button"
+            onClick={isListening ? stopVoiceSearch : startVoiceSearch}
+            title="Voice Search via Web Speech API"
+            className={`p-2 rounded-xl transition-all cursor-pointer flex items-center justify-center shrink-0 ${
+              isListening
+                ? 'bg-red-500/20 border border-red-500 text-red-400 animate-pulse'
+                : 'bg-[#1C1A1F] hover:bg-[#26242C] border border-[#26242C] text-zinc-400 hover:text-white'
+            }`}
+          >
+            <span className="material-symbols-outlined text-base">
+              {isListening ? 'mic' : 'mic_none'}
+            </span>
+          </button>
           {query ? (
             <button
               onClick={() => setQuery('')}
-              className="text-zinc-500 hover:text-white text-xs cursor-pointer px-2"
+              className="text-zinc-500 hover:text-white text-xs cursor-pointer px-2 shrink-0"
             >
               Clear
             </button>
           ) : (
-            <kbd className="text-[10px] font-mono text-zinc-500 bg-[#1C1A1F] px-2 py-0.5 rounded border border-[#26242C]">
+            <kbd className="text-[10px] font-mono text-zinc-500 bg-[#1C1A1F] px-2 py-0.5 rounded border border-[#26242C] shrink-0">
               ESC
             </kbd>
           )}

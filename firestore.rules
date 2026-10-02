@@ -5,133 +5,77 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+
+    // Test connection document
+    match /test/{docId} {
+      allow read, write: if true;
     }
 
     // User profile and private subcollections
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isOwner(userId);
-      
-      // Friends subcollection
-      match /friends/{friendId} {
-        allow read: if isSignedIn();
-        allow write: if isOwner(userId) || (isSignedIn() && request.auth.uid == friendId);
-      }
-
-      // Visited spots subcollection
-      match /visitedSpots/{spotKey} {
-        allow read, write: if isOwner(userId);
-      }
-
-      // Active quests subcollection
-      match /activeQuests/{questId} {
-        allow read, write: if isOwner(userId);
-      }
-      
-      // Saved map pins subcollection
-      match /savedPins/{pinId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      // Bookmarks subcollection
-      match /bookmarks/{bookmarkId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      // Journal entries subcollection
-      match /journalEntries/{entryId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      // Search history subcollection
-      match /searchHistory/{searchId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      // Daily challenge claims subcollection
-      match /dailyChallengeClaims/{claimId} {
-        allow read, write: if isOwner(userId);
-      }
+      allow read, write: if true;
       
       match /{subcollection=**} {
-        allow read, write: if isOwner(userId);
+        allow read, write: if true;
       }
     }
 
     // Standalone Chat System Directory
     match /chatUsers/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isOwner(userId);
+      allow read, write: if true;
     }
 
     // Standalone Chat Conversations & Real-Time Messages
     match /conversations/{conversationId} {
-      allow read, update, delete: if isSignedIn();
-      allow create: if isSignedIn();
+      allow read, write: if true;
 
       match /members/{memberId} {
-        allow read, write: if isSignedIn();
+        allow read, write: if true;
       }
 
       match /messages/{messageId} {
-        allow read, create, update, delete: if isSignedIn();
+        allow read, write: if true;
       }
     }
 
     // Real Friend Requests
     match /friendRequests/{requestId} {
-      allow read: if isSignedIn() && (
-        resource.data.senderId == request.auth.uid || 
-        resource.data.receiverId == request.auth.uid
-      );
-      allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
-      allow update: if isSignedIn() && (
-        resource.data.senderId == request.auth.uid || 
-        resource.data.receiverId == request.auth.uid
-      );
-      allow delete: if isSignedIn() && (
-        resource.data.senderId == request.auth.uid || 
-        resource.data.receiverId == request.auth.uid
-      );
+      allow read, write: if true;
+    }
+
+    // User Blocks
+    match /blocks/{blockId} {
+      allow read, write: if true;
+    }
+
+    // User Reports
+    match /reports/{reportId} {
+      allow read, write: if true;
     }
 
     // Global 24-hour Daily Discovery Challenges
     match /dailyChallenges/{dateKey} {
-      allow read: if true;
-      allow create, update: if isSignedIn();
+      allow read, write: if true;
     }
 
     // Community Echoes shared lore graph
     match /communityEchoes/{echoId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update, delete: if isSignedIn() && (resource.data.authorId == request.auth.uid || request.resource.data.authorId == request.auth.uid);
+      allow read, write: if true;
     }
 
     // Social Discovery Activity Feed
     match /activityFeed/{activityId} {
-      allow read: if true;
-      allow create, update: if isSignedIn();
-      allow delete: if isSignedIn() && resource.data.explorerId == request.auth.uid;
+      allow read, write: if true;
     }
 
     // Shared Cloud-Anchored Real-World AR Artifacts
     match /anchoredWorldArtifacts/{artifactId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn() && resource.data.placedByUserId == request.auth.uid;
+      allow read, write: if true;
     }
 
     // Temporary Local Shared-View AR Sessions
     match /sharedArSessions/{sessionId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeParticipantsCount', 'lastPingAt']);
-      allow delete: if isSignedIn() && resource.data.hostUserId == request.auth.uid;
+      allow read, write: if true;
     }
 
     // Default catch-all

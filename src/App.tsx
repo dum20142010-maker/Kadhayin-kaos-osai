@@ -5,10 +5,15 @@ import { Header } from './components/Header';
 import { BottomBar, TabType } from './components/BottomBar';
 import { ExploreScreen } from './screens/ExploreScreen';
 import { MapScreen } from './screens/MapScreen';
-import { SocialScreen } from './screens/SocialScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
 import { MessagesScreen } from './screens/MessagesScreen';
+import { NanbarScreen } from './screens/NanbarScreen';
+import { HomeScreen } from './screens/HomeScreen';
 import { KaosBotScreen } from './screens/KaosBotScreen';
+import { SquadsScreen } from './screens/SquadsScreen';
+import { NotificationsModal } from './components/NotificationsModal';
+import { HandleSetupModal } from './components/HandleSetupModal';
+import { getActiveUserId } from './services/socialService';
 import { SpotDetailModal } from './components/SpotDetailModal';
 import { ShareToChatModal } from './components/ShareToChatModal';
 import { SqlExplorerModal } from './components/SqlExplorerModal';
@@ -24,6 +29,8 @@ import { MasterSpot } from './types';
 import { ChatAttachment } from './types/chat';
 import { buildKaosContext, KaosAppContext } from './services/kaosContext';
 import { KAOS_SPOTS } from './data/kaosData';
+import { db, auth } from './lib/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 const tabVariants = {
   initial: {
@@ -55,8 +62,10 @@ const GOOGLE_MAPS_API_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyC-8sz-WC5Bh4KEuFafiB15MIPr2rE-1Mk';
 
 export function AppContent() {
-  const [currentTab, setCurrentTab] = useState<TabType>('explore');
+  const [currentTab, setCurrentTab] = useState<TabType>('home');
   const [selectedSpot, setSelectedSpot] = useState<MasterSpot | null>(null);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isHandleSetupOpen, setIsHandleSetupOpen] = useState(false);
 
   // Standalone Chat Sharing State
   const [shareToChatAttachment, setShareToChatAttachment] = useState<ChatAttachment | null>(null);
@@ -115,6 +124,38 @@ export function AppContent() {
   useEffect(() => {
     sqlDb.init();
   }, []);
+
+  // Load & persist KAOS Bot messages with Firestore across sessions
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        try {
+          const docRef = doc(db, 'users', user.uid, 'kaosBotHistory', 'session');
+          const snap = await getDoc(docRef);
+          if (snap.exists() && snap.data().messages) {
+            const remoteMessages = snap.data().messages;
+            if (Array.isArray(remoteMessages) && remoteMessages.length > 0) {
+              setKaosBotMessages(remoteMessages);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to load chat history from Firestore:', err);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (user && kaosBotMessages.length > 1) {
+      const docRef = doc(db, 'users', user.uid, 'kaosBotHistory', 'session');
+      setDoc(docRef, { messages: kaosBotMessages, updatedAt: new Date().toISOString() }, { merge: true })
+        .catch((err) => {
+          console.error('Failed to persist chat history to Firestore:', err);
+        });
+    }
+  }, [kaosBotMessages]);
 
   const [showQuestBox, setShowQuestBox] = useState<boolean>(false);
 
@@ -338,7 +379,7 @@ export function AppContent() {
   return (
     <SoundscapeProvider>
       <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
-        <div className="min-h-screen bg-[#121114] text-zinc-100 flex flex-col font-sans selection:bg-[#F05423]/30 selection:text-white">
+        <div className="min-h-screen bg-background-primary text-text-primary flex flex-col font-sans selection:bg-kaos-primary/10 selection:text-text-primary">
           {/* Top Offline Notification Toast */}
           {isOffline && (
             <div className="bg-amber-500/20 border-b border-amber-500/40 text-amber-300 text-xs py-1.5 px-4 text-center font-mono font-medium flex items-center justify-center gap-2">
@@ -399,6 +440,20 @@ export function AppContent() {
                 exit="exit"
                 className="w-full h-full"
               >
+                {currentTab === 'home' && (
+                  <HomeScreen
+                    onShowToast={showToast}
+                    onNavigateTab={(tab) => setCurrentTab(tab)}
+                    onSelectSpot={(spot) => setSelectedSpot(spot)}
+                    onStartQuest={(quest) => {
+                      setActiveQuest(quest);
+                      setShowQuestBox(true);
+                    }}
+                    onOpenNotifications={() => setIsNotificationsOpen(true)}
+                    userLevel={level}
+                    userXp={xp}
+                  />
+                )}
                 {currentTab === 'explore' && (
                   <ExploreScreen
                     onSpotSelected={(spot) => {
@@ -412,8 +467,8 @@ export function AppContent() {
                 {currentTab === 'map' && (
                   <MapScreen onShowToast={showToast} onAwardXp={handleAwardXp} />
                 )}
-                {currentTab === 'messages' && (
-                  <MessagesScreen
+                {currentTab === 'friends' && (
+                  <NanbarScreen
                     onShowToast={showToast}
                     onSelectSpot={(spot) => {
                       setSelectedSpot(spot);
@@ -427,12 +482,6 @@ export function AppContent() {
                     onNavigateToMap={() => setCurrentTab('map')}
                     initialConversationId={targetChatConversationId}
                     masterSpots={KAOS_SPOTS}
-                  />
-                )}
-                {currentTab === 'social' && (
-                  <SocialScreen
-                    onShowToast={showToast}
-                    onSpotSelected={(spot) => setSelectedSpot(spot)}
                   />
                 )}
                 {currentTab === 'profile' && (
@@ -520,11 +569,28 @@ export function AppContent() {
             }
           />
 
+          {/* Notifications Modal Overlay */}
+          <NotificationsModal
+            userId={getActiveUserId()}
+            isOpen={isNotificationsOpen}
+            onClose={() => setIsNotificationsOpen(false)}
+          />
+
+          {/* Handle Setup Modal */}
+          <HandleSetupModal
+            isOpen={isHandleSetupOpen}
+            currentHandle="usha_explorer"
+            onSaveHandle={async (newHandle) => {
+              showToast(`Reserved handle @${newHandle}! 🔥`);
+            }}
+            onClose={() => setIsHandleSetupOpen(false)}
+          />
+
           {/* Persistent Bottom Navigation */}
           <BottomBar
             currentTab={currentTab}
             onTabSelected={(tab) => {
-              if (tab === 'messages') setUnreadChatCount(0);
+              if (tab === 'friends') setUnreadChatCount(0);
               setCurrentTab(tab);
               logAction(`Switched to ${tab} tab`);
             }}
