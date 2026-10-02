@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TabType } from './BottomBar';
 import { sqlDb, SqlSyncInfo } from '../lib/sqlDatabase';
 import { useDailyQuestNotification } from '../hooks/useDailyQuestNotification';
+import { KaosAppIcon } from './KaosAppIcon';
 
 interface HeaderProps {
   currentTab: TabType;
@@ -11,6 +12,7 @@ interface HeaderProps {
   onOpenSqlExplorer?: () => void;
   onOpenCommandPalette?: () => void;
   unreadChatCount?: number;
+  onOpenThemeEngine?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSqlExplorer,
   onOpenCommandPalette,
   unreadChatCount = 0,
+  onOpenThemeEngine,
 }) => {
   const { hasNewQuests } = useDailyQuestNotification(currentTab);
   const [syncInfo, setSyncInfo] = useState<SqlSyncInfo>(() => sqlDb.getSyncInfo());
@@ -51,12 +54,13 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => onTabSelected('explore')}
-            className="text-left flex items-center gap-2.5 cursor-pointer"
+            className="text-left flex items-center gap-2.5 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#F05423] to-[#FF8A00] flex items-center justify-center shadow-md shadow-[#F05423]/25">
-              <span className="font-extrabold text-white text-base tracking-wider">K</span>
+            <KaosAppIcon size={32} className="group-hover:scale-105 transition-transform" />
+            <div className="flex flex-col">
+              <span className="text-lg font-black text-white tracking-tight leading-none">KAOS</span>
+              <span className="text-[8px] font-mono font-bold text-kaos-pink tracking-widest uppercase">Grid</span>
             </div>
-            <span className="text-lg font-bold text-white tracking-tight">KAOS</span>
           </button>
         </div>
 
@@ -110,6 +114,17 @@ export const Header: React.FC<HeaderProps> = ({
               <kbd className="hidden lg:inline text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-[#121114] border border-[#26242C] text-zinc-500 group-hover:text-zinc-300">
                 ⌘K
               </kbd>
+            </button>
+          )}
+
+          {/* Dynamic Theme Engine Trigger */}
+          {onOpenThemeEngine && (
+            <button
+              onClick={onOpenThemeEngine}
+              className="w-9 h-9 rounded-xl bg-[#18161D] hover:bg-[#24212c] border border-[#26242C] hover:border-kaos-pink/50 text-zinc-400 hover:text-white transition-all cursor-pointer flex items-center justify-center shadow-sm"
+              title="KAOS Dynamic Theme Engine (Time-of-Day & Area Accents)"
+            >
+              <span className="material-symbols-outlined text-lg">palette</span>
             </button>
           )}
 

@@ -69,4 +69,5 @@ export interface Conversation {
   };
   updatedAt: string;
   unreadCount?: number;
+  typingStatus?: { [userId: string]: boolean };
 }

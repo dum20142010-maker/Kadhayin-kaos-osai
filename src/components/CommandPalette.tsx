@@ -3,6 +3,7 @@ import { KAOS_SPOTS, KAOS_PERKS } from '../data/kaosData';
 import { MasterSpot } from '../types';
 import { TabType } from './BottomBar';
 import { sqlDb, SearchHistoryItem } from '../lib/sqlDatabase';
+import { KaosAppIcon } from './KaosAppIcon';
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface CommandPaletteProps {
   onSelectSpot: (spot: MasterSpot) => void;
   onNavigateTab: (tab: TabType) => void;
   onOpenSqlExplorer: () => void;
+  onOpenNavRd?: () => void;
 }
 
 interface CommandItem {
@@ -28,6 +30,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSelectSpot,
   onNavigateTab,
   onOpenSqlExplorer,
+  onOpenNavRd,
 }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -173,6 +176,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
     });
 
+    if (onOpenNavRd) {
+      list.push({
+        id: 'tool-nav-rd',
+        category: 'Tools',
+        title: 'Live Navigation & R&D Intelligence Radar',
+        subtitle: 'Google Search grounded Chennai metro routes, opening hours, and archaeological R&D',
+        icon: 'travel_explore',
+        badge: 'Gemini 3.5',
+        action: () => {
+          onOpenNavRd();
+          onClose();
+        },
+      });
+    }
+
     // 1,000+ Chennai Landmarks
     KAOS_SPOTS.forEach((spot) => {
       list.push({
@@ -260,7 +278,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       >
         {/* Search Input Bar */}
         <div className="p-4 border-b border-[#26242C] flex items-center gap-3 bg-[#121114]">
-          <span className="material-symbols-outlined text-xl text-[#F05423]">search</span>
+          <KaosAppIcon size={24} withGlow={false} />
+          <span className="material-symbols-outlined text-lg text-zinc-500">search</span>
           <input
             ref={inputRef}
             type="text"

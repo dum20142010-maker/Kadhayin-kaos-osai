@@ -147,7 +147,7 @@ const SEED_EXPLORERS: FriendUser[] = [
 
 // Helper to get active user ID
 export function getActiveUserId(): string {
-  return auth.currentUser?.uid || CURRENT_USER.id || 'usha_baskar_explorer';
+  return auth.currentUser?.uid || 'anonymous';
 }
 
 // ----------------------------------------------------

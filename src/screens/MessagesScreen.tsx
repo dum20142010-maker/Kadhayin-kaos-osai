@@ -1,6 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MasterSpot } from '../types';
+import { MessagesEmptyState } from '../components/MessagesEmptyState';
+import { MessagesGlobalSearchBar } from '../components/MessagesGlobalSearchBar';
+import { db, auth } from '../lib/firebase';
+import { 
+  collection, 
+  query, 
+  orderBy, 
+  onSnapshot, 
+  doc, 
+  updateDoc, 
+  writeBatch, 
+  getDocs, 
+  serverTimestamp, 
+  setDoc,
+  arrayUnion
+} from 'firebase/firestore';
 
 // ==========================================================================
 // CENTRAL CONTROLLED CHAOS COHERENT SCHEMAS & TOKENS
@@ -66,8 +82,10 @@ export interface MessagesScreenProps {
   onSelectSpot?: (spot: MasterSpot) => void;
   onSelectQuest?: (quest: any) => void;
   onNavigateToMap?: () => void;
+  onNavigateTab?: (tab: string) => void;
   initialConversationId?: string | null;
   masterSpots?: MasterSpot[];
+  kaosBotMessages?: any[];
 }
 
 // Global seed of available explorers
@@ -124,6 +142,19 @@ const INITIAL_EXPLORERS: SocialUser[] = [
     isOnline: true,
     role: 'Member',
   },
+  {
+    id: 'bot_kaos',
+    displayName: 'KAOS Heritage Bot',
+    handle: 'kaos_bot',
+    avatar: '🤖',
+    level: 99,
+    xp: 99999,
+    badge: 'Madras Lore Engine',
+    bio: 'Autonomous cultural archive & real-time heritage intelligence core.',
+    questsCompleted: 108,
+    isOnline: true,
+    role: 'Admin',
+  },
 ];
 
 // Current signed-in explorer (You)
@@ -146,8 +177,10 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
   onSelectSpot,
   onSelectQuest,
   onNavigateToMap,
+  onNavigateTab,
   initialConversationId,
   masterSpots = [],
+  kaosBotMessages = [],
 }) => {
   // Nanbar Core Navigation: 'friends' | 'messages' | 'groups'
   const [activeTab, setActiveTab] = useState<'friends' | 'messages' | 'groups'>('friends');
@@ -170,6 +203,7 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     INITIAL_EXPLORERS[0],
     INITIAL_EXPLORERS[1],
     INITIAL_EXPLORERS[2],
+    INITIAL_EXPLORERS[4], // KAOS Bot
   ]);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([
     { id: 'req_1', sender: INITIAL_EXPLORERS[3] },
@@ -185,6 +219,17 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
 
   // Chats states with approved Controlled Chaos features colors
   const [conversations, setConversations] = useState<Conversation[]>([
+    {
+      id: 'conv_kaos_bot',
+      name: 'KAOS Heritage Bot',
+      avatar: '🤖',
+      type: 'direct',
+      lastMessageText: 'Madras archives decrypted: 17 archeological sites cataloged.',
+      lastMessageTime: 'Just now',
+      unreadCount: 0,
+      memberIds: ['me', 'bot_kaos'],
+      groupColor: 'border-kaos-teal text-kaos-teal',
+    },
     {
       id: 'conv_group_mylapore',
       name: 'Mylapore Heritage Seekers',
@@ -223,8 +268,13 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     },
   ]);
 
-  const [activeConvId, setActiveConvId] = useState<string | null>(initialConversationId || 'conv_group_mylapore');
+  const [activeConvId, setActiveConvId] = useState<string | null>(initialConversationId || 'conv_kaos_bot');
   const [chatMessages, setChatMessages] = useState<Record<string, Message[]>>({
+    conv_kaos_bot: [
+      { id: 'kb1', senderId: 'bot_kaos', senderName: 'KAOS Heritage Bot', senderAvatar: '🤖', text: 'Namaskaram, Explorer! I am the KAOS Heritage Intelligence Bot. I analyze ancient Madras cartography, temple acoustics, and vintage trading ledger records.', timestamp: '10:00 AM', status: 'read' },
+      { id: 'kb2', senderId: 'me', senderName: 'Usha Baskar', senderAvatar: '🛡️', text: 'Can you summarize the lore around Kapaleeshwarar Tank and George Town coffee houses?', timestamp: '10:02 AM', status: 'read' },
+      { id: 'kb3', senderId: 'bot_kaos', senderName: 'KAOS Heritage Bot', senderAvatar: '🤖', text: 'Decrypted Archive Log:\n• Kapaleeshwarar Tank: Constructed in the 7th–8th century Pallava era, serving as an acoustic and hydrological centerpiece for Mylapore.\n• George Town Coffee Houses: 19th-century spice and brass merchants established the peaberry 80:20 roasting ratio along Armenian Street.\n• Secret Trail Insight: Check the shadow projection from Chennai Central clock tower at 4:30 PM for the heritage marker alignment.', timestamp: '10:05 AM', status: 'read' },
+    ],
     conv_group_mylapore: [
       { id: '1', senderId: 'user_priya', senderName: 'Priya S', senderAvatar: '🏛️', text: 'Hey guys! Look at this incredible sound map of Mylapore tank!', timestamp: '09:30 AM', status: 'read' },
       { id: '2', senderId: 'user_alex', senderName: 'Alex M', senderAvatar: '🧭', text: 'Stunning! The acoustic echo aligns exactly with the gopuram step counts.', timestamp: '09:32 AM', status: 'read' },
@@ -274,16 +324,109 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     'Sam shared Triplicane Coffee House live coordinates.',
   ]);
 
-  // Clean unread count on opening conversation
+  // Real-time typing status for incoming dynamic responses
+  const [typingTeammate, setTypingTeammate] = useState<{ id: string; name: string; avatar: string; convId: string } | null>(null);
+
+  // Clean unread count & mark messages as read on opening conversation
   useEffect(() => {
     if (activeConvId) {
       setConversations((prev) =>
         prev.map((c) => (c.id === activeConvId ? { ...c, unreadCount: 0 } : c))
       );
+      setChatMessages((prev) => {
+        const msgs = prev[activeConvId];
+        if (!msgs) return prev;
+        const updated = msgs.map((m) =>
+          m.senderId !== 'me' && m.status !== 'read' ? { ...m, status: 'read' as const } : m
+        );
+        return { ...prev, [activeConvId]: updated };
+      });
+
+      // Synchronize read status across all active Firestore authenticated sessions
+      const syncReadToFirestore = async () => {
+        try {
+          const currentUid = auth.currentUser?.uid || 'me';
+          const msgsRef = collection(db, 'conversations', activeConvId, 'messages');
+          const snap = await getDocs(msgsRef);
+          if (!snap.empty) {
+            const batch = writeBatch(db);
+            let updateCount = 0;
+            snap.docs.forEach((docSnap) => {
+              const d = docSnap.data();
+              if (d.senderId !== currentUid && d.status !== 'read') {
+                batch.update(docSnap.ref, {
+                  status: 'read',
+                  readAt: serverTimestamp(),
+                  readBy: arrayUnion(currentUid),
+                });
+                updateCount++;
+              }
+            });
+            if (updateCount > 0) {
+              await batch.commit();
+            }
+          }
+        } catch (err) {
+          // Fallback gracefully if database or network unavailable
+          console.debug('Firestore read sync:', err);
+        }
+      };
+      syncReadToFirestore();
+
       // Ensure group tab is home on open
       setActiveGroupTab('home');
     }
     scrollToBottom();
+  }, [activeConvId]);
+
+  // Real-time Firestore onSnapshot listener for conversation messages & cross-session read state
+  useEffect(() => {
+    if (!activeConvId) return;
+
+    try {
+      const q = query(collection(db, 'conversations', activeConvId, 'messages'), orderBy('createdAt', 'asc'));
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const remoteMsgs: Message[] = snapshot.docs.map((docSnap) => {
+              const d = docSnap.data();
+              let timestampStr = d.timestamp;
+              if (!timestampStr && d.createdAt) {
+                if (typeof d.createdAt?.toDate === 'function') {
+                  timestampStr = d.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } else if (typeof d.createdAt === 'string') {
+                  timestampStr = new Date(d.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                }
+              }
+              return {
+                id: docSnap.id,
+                senderId: d.senderId || 'me',
+                senderName: d.senderName || 'Explorer',
+                senderAvatar: d.senderAvatar || '🧭',
+                text: d.text || '',
+                timestamp: timestampStr || 'Just now',
+                status: d.status || 'sent',
+                attachedSpot: d.attachedSpot,
+                attachedLocation: d.attachedLocation,
+              };
+            });
+
+            setChatMessages((prev) => ({
+              ...prev,
+              [activeConvId]: remoteMsgs,
+            }));
+          }
+        },
+        (error) => {
+          console.debug('Firestore onSnapshot listener notice:', error);
+        }
+      );
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.debug('Could not attach Firestore onSnapshot listener:', err);
+    }
   }, [activeConvId]);
 
   useEffect(() => {
@@ -412,14 +555,15 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     const clean = composeText.trim();
     if (!clean || !activeConvId) return;
 
+    const msgId = `msg_${Date.now()}`;
     const newMsg: Message = {
-      id: `msg_${Date.now()}`,
+      id: msgId,
       senderId: 'me',
       senderName: CURRENT_USER.displayName,
       senderAvatar: CURRENT_USER.avatar,
       text: clean,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      status: 'sent',
+      status: 'sending',
     };
 
     setChatMessages((prev) => ({
@@ -437,6 +581,84 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
 
     setComposeText('');
     scrollToBottom();
+
+    // Transition from 'sending' to 'sent' after simulated network dispatch
+    setTimeout(() => {
+      setChatMessages((prev) => {
+        const msgs = prev[activeConvId];
+        if (!msgs) return prev;
+        return {
+          ...prev,
+          [activeConvId]: msgs.map((m) => (m.id === msgId ? { ...m, status: 'sent' as const } : m)),
+        };
+      });
+    }, 220);
+
+    // Trigger dynamic incoming teammate response
+    const targetConv = conversations.find((c) => c.id === activeConvId);
+    if (targetConv) {
+      let respondent: SocialUser | undefined;
+      if (targetConv.type === 'direct') {
+        const otherId = targetConv.memberIds.find((id) => id !== 'me');
+        respondent = INITIAL_EXPLORERS.find((u) => u.id === otherId);
+      } else {
+        const otherMembers = INITIAL_EXPLORERS.filter((u) => targetConv.memberIds.includes(u.id));
+        respondent = otherMembers[Math.floor(Math.random() * otherMembers.length)];
+      }
+
+      if (respondent) {
+        const respUser = respondent;
+        const currentId = activeConvId;
+        setTimeout(() => {
+          // Teammate is reading / typing -> mark user's message as 'read'
+          setChatMessages((prev) => {
+            const msgs = prev[currentId];
+            if (!msgs) return prev;
+            return {
+              ...prev,
+              [currentId]: msgs.map((m) => (m.senderId === 'me' ? { ...m, status: 'read' as const } : m)),
+            };
+          });
+          setTypingTeammate({ id: respUser.id, name: respUser.displayName, avatar: respUser.avatar, convId: currentId });
+          scrollToBottom();
+        }, 600);
+
+        setTimeout(() => {
+          setTypingTeammate(null);
+          const replies = [
+            `Acknowledged! The coordinates align with our vintage survey ledger. 🧭`,
+            `Great clue! Adding this landmark dispatch to our expedition log. 🏛️`,
+            `Got it! Grinding the 80:20 plantation roast peaberry beans and heading over soon. ☕`,
+            `Checked the acoustic reverberation — resonance matches the gopuram step count! 🎵`,
+            `Transmission received on the Madras frequency. Let's conquer this quest! ⚔️`,
+          ];
+          const chosenReply = replies[Math.floor(Math.random() * replies.length)];
+          const incomingMsg: Message = {
+            id: `msg_in_${Date.now()}`,
+            senderId: respUser.id,
+            senderName: respUser.displayName,
+            senderAvatar: respUser.avatar,
+            text: chosenReply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            status: 'read',
+          };
+
+          setChatMessages((prev) => ({
+            ...prev,
+            [currentId]: [...(prev[currentId] || []), incomingMsg],
+          }));
+
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === currentId
+                ? { ...c, lastMessageText: chosenReply, lastMessageTime: 'Just now' }
+                : c
+            )
+          );
+          scrollToBottom();
+        }, 1750);
+      }
+    }
   };
 
   const handleAttachSpotToChat = (spot: MasterSpot) => {
@@ -477,6 +699,88 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     }));
     setShowAttachMenu(false);
     onShowToast('Map coordinates pins attached successfully!');
+  };
+
+  const handleExportChat = (conv: Conversation) => {
+    const msgs = chatMessages[conv.id] || [];
+    const timestamp = new Date().toLocaleString();
+    const isBot = conv.memberIds.includes('bot_kaos') || conv.name.toLowerCase().includes('bot') || conv.name.toLowerCase().includes('kaos');
+
+    // Extract insights & lore highlights
+    const insights: string[] = [];
+    msgs.forEach((m) => {
+      if (m.attachedSpot) {
+        insights.push(`• Landmark Dispatch: ${m.attachedSpot.title} — ${m.attachedSpot.description}`);
+      }
+      if (m.attachedLocation) {
+        insights.push(`• Coordinate Pin: ${m.attachedLocation}`);
+      }
+      if (m.text.includes('•') || m.text.includes('Archive') || m.text.includes('Decrypted') || m.text.includes('Lore') || m.text.includes('Quest')) {
+        insights.push(`• Intelligence Note: ${m.text.replace(/\n+/g, ' ')}`);
+      }
+    });
+
+    let content = `=====================================================\n`;
+    content += `   KAOS EXPEDITION CHAT EXPORT & LORE DOSSIER\n`;
+    content += `=====================================================\n\n`;
+    content += `Thread: ${conv.name} (${conv.type.toUpperCase()})\n`;
+    content += `Thread ID: ${conv.id}\n`;
+    content += `Export Date: ${timestamp}\n`;
+    content += `Total Messages: ${msgs.length}\n`;
+    if (conv.groupQuestName) {
+      content += `Active Group Quest: ${conv.groupQuestName} (${conv.groupQuestProgress}%)\n`;
+    }
+    content += `\n-----------------------------------------------------\n`;
+    content += `   CHRONOLOGICAL EXPEDITION LOG\n`;
+    content += `-----------------------------------------------------\n\n`;
+
+    if (msgs.length === 0) {
+      content += `[No message logs found in this thread]\n`;
+    } else {
+      msgs.forEach((m) => {
+        content += `[${m.timestamp}] ${m.senderName} (${m.senderId === 'me' ? 'Explorer' : 'Teammate'}):\n`;
+        content += `  ${m.text}\n`;
+        if (m.attachedSpot) {
+          content += `  [LANDMARK ATTACHMENT: ${m.attachedSpot.title}]\n`;
+          content += `  Description: ${m.attachedSpot.description}\n`;
+          content += `  Zone: ${m.attachedSpot.zone} (${m.attachedSpot.category})\n`;
+        }
+        if (m.attachedLocation) {
+          content += `  [GPS PIN: ${m.attachedLocation}]\n`;
+        }
+        content += `\n`;
+      });
+    }
+
+    content += `-----------------------------------------------------\n`;
+    content += `   DISCOVERED LORE & FIELD INSIGHTS SUMMARY\n`;
+    content += `-----------------------------------------------------\n`;
+    if (insights.length > 0) {
+      insights.forEach((item) => {
+        content += `${item}\n`;
+      });
+    } else {
+      content += `• Chennai Heritage Intel: Madras archives and field communication cataloged.\n`;
+      content += `• Thread Members: ${conv.name}\n`;
+    }
+
+    content += `\n=====================================================\n`;
+    content += `Generated by KAOS Heritage Protocol · Chennai Explorer\n`;
+    content += `=====================================================\n`;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeName = conv.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `KAOS_Chat_Export_${safeName}_${new Date().toISOString().slice(0, 10)}.txt`;
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    onShowToast(`Exported "${filename}" successfully!`);
   };
 
   const handleConfirmCreateGroup = (e: React.FormEvent) => {
@@ -535,6 +839,66 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
     );
     setSelectedGroupMemberAction(null);
     onShowToast(`Removed surveyor from group ${groupName}.`);
+  };
+
+  const handleStartDirectMessage = (user: SocialUser, initialText?: string) => {
+    const existing = conversations.find((c) => c.type === 'direct' && c.memberIds.includes(user.id));
+    if (existing) {
+      setActiveConvId(existing.id);
+      if (initialText) {
+        const greetingMsg: Message = {
+          id: `msg_${Date.now()}`,
+          senderId: 'me',
+          senderName: CURRENT_USER.displayName,
+          senderAvatar: CURRENT_USER.avatar,
+          text: initialText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'sent',
+        };
+        setChatMessages((prev) => ({
+          ...prev,
+          [existing.id]: [...(prev[existing.id] || []), greetingMsg],
+        }));
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === existing.id
+              ? { ...c, lastMessageText: initialText, lastMessageTime: 'Just now' }
+              : c
+          )
+        );
+      }
+    } else {
+      const newId = `conv_${user.id}_${Date.now()}`;
+      const firstText = initialText || 'Say hello to your teammate!';
+      const dConv: Conversation = {
+        id: newId,
+        name: user.displayName,
+        avatar: user.avatar,
+        type: 'direct',
+        lastMessageText: firstText,
+        lastMessageTime: 'Just now',
+        unreadCount: 0,
+        memberIds: ['me', user.id],
+      };
+      setConversations((prev) => [dConv, ...prev]);
+      setChatMessages((prev) => ({
+        ...prev,
+        [newId]: [
+          {
+            id: `msg_init_${Date.now()}`,
+            senderId: 'me',
+            senderName: CURRENT_USER.displayName,
+            senderAvatar: CURRENT_USER.avatar,
+            text: firstText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            status: 'sent',
+          },
+        ],
+      }));
+      setActiveConvId(newId);
+    }
+    setActiveTab('messages');
+    onShowToast(`Opened message thread with @${user.handle}`);
   };
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
@@ -597,7 +961,37 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
         </div>
       </div>
 
-      {/* 2. NANBAR CORE NAVIGATION: Friends | Messages | Groups */}
+      {/* 2. GLOBAL TOP SEARCH BAR OVER ALL CHAT & BOT HISTORIES */}
+      <MessagesGlobalSearchBar
+        conversations={conversations}
+        chatMessages={chatMessages}
+        kaosBotMessages={kaosBotMessages}
+        friends={myFriends}
+        onSelectDirectMessage={(convId) => {
+          setActiveTab('messages');
+          setActiveConvId(convId);
+          onShowToast('Opened message conversation thread');
+        }}
+        onSelectGroupMessage={(convId) => {
+          setActiveTab('groups');
+          setActiveConvId(convId);
+          setActiveGroupTab('chat');
+          onShowToast('Opened squad faction chat');
+        }}
+        onSelectBotMessage={(botItem) => {
+          if (onNavigateTab) {
+            onNavigateTab('assistant');
+            onShowToast('Navigated to KAOS Bot Assistant');
+          } else {
+            onShowToast(`KAOS Bot response: "${botItem.snippet.slice(0, 45)}..."`);
+          }
+        }}
+        onSelectFriend={(friend) => {
+          handleStartDirectMessage(friend);
+        }}
+      />
+
+      {/* 3. NANBAR CORE NAVIGATION: Friends | Messages | Groups */}
       <div className="flex items-center gap-1.5 bg-surface-primary border border-progress-track p-1.5 rounded-2xl w-fit mb-6">
         <button
           onClick={() => setActiveTab('friends')}
@@ -716,12 +1110,32 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
         )}
 
         {/* TAB B: DIRECT MESSAGES */}
-        {activeTab === 'messages' && (
+        {activeTab === 'messages' && conversations.length === 0 && (
+          <MessagesEmptyState
+            onStartDirectMessage={handleStartDirectMessage}
+            onOpenFindFriends={() => setShowFindFriends(true)}
+            onNavigateToGroups={() => setActiveTab('groups')}
+            onSelectSpot={onSelectSpot}
+            suggestedUsers={INITIAL_EXPLORERS}
+            masterSpots={masterSpots}
+          />
+        )}
+
+        {activeTab === 'messages' && conversations.length > 0 && (
           <>
             {/* Sidebar threads */}
             <div className={`w-full md:w-80 lg:w-96 border-r border-progress-track flex flex-col bg-background-secondary ${activeConvId ? 'hidden md:flex' : 'flex'}`}>
               <div className="p-4 border-b border-progress-track space-y-2.5">
-                <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider">Chat Inboxes</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-text-secondary uppercase tracking-wider">Chat Inboxes</h4>
+                  <button
+                    onClick={() => setShowFindFriends(true)}
+                    className="text-[10px] font-bold text-kaos-teal hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-xs">add</span>
+                    <span>New Chat</span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   placeholder="Filter conversations..."
@@ -732,48 +1146,67 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
               </div>
 
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                <AnimatePresence mode="popLayout">
-                  {conversations
-                    .filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                    .map((conv) => {
-                      const isSelected = activeConvId === conv.id;
-                      return (
-                        <motion.button
-                          layout
-                          initial={{ opacity: 0, y: 12, scale: 0.98 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.96, x: -10 }}
-                          transition={{ duration: 0.22, ease: 'easeOut' }}
-                          key={conv.id}
-                          onClick={() => setActiveConvId(conv.id)}
-                          className={`w-full p-3 rounded-2xl text-left border transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                            isSelected
-                              ? 'bg-surface-secondary border-kaos-pink/30'
-                              : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-xl shrink-0">
-                              {conv.avatar}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-1">
-                                <h4 className="text-xs font-bold text-kaos-offwhite truncate">{conv.name}</h4>
-                                <span className="text-[9px] text-text-muted font-mono">{conv.lastMessageTime}</span>
+                {conversations.filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
+                  <div className="p-6 text-center text-text-secondary space-y-2">
+                    <span className="material-symbols-outlined text-2xl text-text-muted">search_off</span>
+                    <p className="text-xs font-semibold text-kaos-offwhite">No conversations found</p>
+                    <p className="text-[10px] text-text-muted">No messages matching "{searchQuery}"</p>
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="text-[11px] font-bold text-kaos-pink hover:underline cursor-pointer pt-1 block mx-auto"
+                    >
+                      Clear search filter
+                    </button>
+                  </div>
+                ) : (
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {conversations
+                      .filter((c) => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                      .map((conv) => {
+                        const isSelected = activeConvId === conv.id;
+                        return (
+                          <motion.button
+                            layout
+                            initial={{ opacity: 0, y: 14, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.92, y: -10 }}
+                            transition={{
+                              layout: { type: 'spring', stiffness: 360, damping: 28, mass: 0.7 },
+                              opacity: { duration: 0.2 },
+                              y: { type: 'spring', stiffness: 400, damping: 26 },
+                              scale: { duration: 0.18 },
+                            }}
+                            key={conv.id}
+                            onClick={() => setActiveConvId(conv.id)}
+                            className={`w-full p-3 rounded-2xl text-left border transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                              isSelected
+                                ? 'bg-surface-secondary border-kaos-pink/30 shadow-md'
+                                : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-pink to-kaos-purple flex items-center justify-center text-xl shrink-0 shadow-sm">
+                                {conv.avatar}
                               </div>
-                              <p className="text-[11px] text-text-secondary truncate mt-0.5">{conv.lastMessageText}</p>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <h4 className="text-xs font-bold text-kaos-offwhite truncate">{conv.name}</h4>
+                                  <span className="text-[9px] text-text-muted font-mono">{conv.lastMessageTime}</span>
+                                </div>
+                                <p className="text-[11px] text-text-secondary truncate mt-0.5">{conv.lastMessageText}</p>
+                              </div>
                             </div>
-                          </div>
 
-                          {conv.unreadCount > 0 && (
-                            <span className="w-5 h-5 rounded-full bg-kaos-pink text-white font-bold font-mono text-[10px] flex items-center justify-center shrink-0 shadow-md">
-                              {conv.unreadCount}
-                            </span>
-                          )}
-                        </motion.button>
-                      );
-                    })}
-                </AnimatePresence>
+                            {conv.unreadCount > 0 && (
+                              <span className="w-5 h-5 rounded-full bg-kaos-pink text-white font-bold font-mono text-[10px] flex items-center justify-center shrink-0 shadow-md">
+                                {conv.unreadCount}
+                              </span>
+                            )}
+                          </motion.button>
+                        );
+                      })}
+                  </AnimatePresence>
+                )}
               </div>
             </div>
 
@@ -798,44 +1231,112 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        const contact = INITIAL_EXPLORERS.find((u) => activeConv.memberIds.includes(u.id) && u.id !== 'me');
-                        if (contact) setViewingProfileUser(contact);
-                      }}
-                      className="p-2 rounded-xl bg-surface-primary border border-progress-track text-text-secondary hover:text-kaos-pink cursor-pointer shadow-md"
-                    >
-                      <span className="material-symbols-outlined text-sm font-bold">info</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleExportChat(activeConv)}
+                        className="px-2.5 py-1.5 rounded-xl bg-surface-primary hover:bg-kaos-teal/20 text-kaos-teal border border-kaos-teal/30 hover:border-kaos-teal text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95"
+                        title="Export conversation log & lore summary"
+                      >
+                        <span className="material-symbols-outlined text-sm">download</span>
+                        <span className="hidden sm:inline">Export Chat</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          const contact = INITIAL_EXPLORERS.find((u) => activeConv.memberIds.includes(u.id) && u.id !== 'me');
+                          if (contact) setViewingProfileUser(contact);
+                        }}
+                        className="p-2 rounded-xl bg-surface-primary border border-progress-track text-text-secondary hover:text-kaos-pink cursor-pointer shadow-md"
+                        title="View details"
+                      >
+                        <span className="material-symbols-outlined text-sm font-bold">info</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-primary/40">
-                    <AnimatePresence mode="popLayout">
+                    <AnimatePresence initial={false} mode="popLayout">
                       {(chatMessages[activeConv.id] || []).map((msg) => {
                         const isMe = msg.senderId === 'me';
                         return (
                           <motion.div
                             layout
-                            initial={{ opacity: 0, y: 15, scale: 0.96 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.92, y: -8 }}
-                            transition={{ duration: 0.22, ease: 'easeOut' }}
+                            initial={{ 
+                              opacity: 0, 
+                              x: isMe ? 28 : -28, 
+                              y: 14, 
+                              scale: 0.92 
+                            }}
+                            animate={{ 
+                              opacity: 1, 
+                              x: 0, 
+                              y: 0, 
+                              scale: 1 
+                            }}
+                            exit={{ 
+                              opacity: 0, 
+                              scale: 0.9, 
+                              y: -8 
+                            }}
+                            transition={{ 
+                              type: 'spring',
+                              stiffness: isMe ? 480 : 400,
+                              damping: 24,
+                              mass: 0.65
+                            }}
                             key={msg.id}
-                            className={`flex gap-3 max-w-[80%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+                            className={`flex gap-3 max-w-[82%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
                           >
-                            <div className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0">
+                            <motion.div 
+                              initial={{ scale: 0, rotate: isMe ? 15 : -15 }}
+                              animate={{ scale: 1, rotate: 0 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 20, delay: 0.04 }}
+                              className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0 shadow-sm"
+                            >
                               {msg.senderAvatar}
-                            </div>
+                            </motion.div>
                             <div className="space-y-1">
-                              <div className="flex items-center gap-2">
+                              <div className={`flex items-center gap-1.5 ${isMe ? 'justify-end' : 'justify-start'}`}>
                                 <span className="text-[10px] font-bold text-kaos-offwhite">{msg.senderName}</span>
                                 <span className="text-[8px] text-text-muted font-mono">{msg.timestamp}</span>
+                                {isMe && (
+                                  <span
+                                    className="inline-flex items-center ml-0.5"
+                                    title={
+                                      msg.status === 'read'
+                                        ? 'Read by teammate'
+                                        : msg.status === 'sent'
+                                        ? 'Delivered'
+                                        : 'Sending...'
+                                    }
+                                  >
+                                    {msg.status === 'read' ? (
+                                      <span className="material-symbols-outlined text-[13px] text-kaos-teal font-black drop-shadow">
+                                        done_all
+                                      </span>
+                                    ) : msg.status === 'sent' ? (
+                                      <span className="material-symbols-outlined text-[13px] text-white/70 font-semibold">
+                                        check
+                                      </span>
+                                    ) : (
+                                      <span className="material-symbols-outlined text-[11px] text-white/50 animate-spin">
+                                        sync
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                                {!isMe && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-kaos-teal animate-ping" />
+                                )}
                               </div>
-                              <div
-                                className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                              <motion.div
+                                initial={{ scale: 0.97 }}
+                                animate={{ scale: 1 }}
+                                transition={{ type: 'spring', stiffness: 450, damping: 25 }}
+                                className={`p-3 rounded-2xl text-xs leading-relaxed transition-all shadow-md ${
                                   isMe
-                                    ? 'bg-kaos-pink text-white rounded-tr-none shadow-md'
-                                    : 'bg-surface-secondary text-kaos-offwhite rounded-tl-none border border-progress-track'
+                                    ? 'bg-gradient-to-tr from-kaos-pink to-kaos-purple text-white rounded-tr-none'
+                                    : 'bg-surface-secondary/95 text-kaos-offwhite rounded-tl-none border border-kaos-teal/20 hover:border-kaos-teal/40'
                                 }`}
                               >
                                 {msg.text}
@@ -859,12 +1360,36 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
                                     </button>
                                   </div>
                                 )}
-                              </div>
+                              </motion.div>
                             </div>
                           </motion.div>
                         );
                       })}
                     </AnimatePresence>
+
+                    {/* Animated Typing Indicator */}
+                    <AnimatePresence>
+                      {typingTeammate && typingTeammate.convId === activeConv.id && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 12, scale: 0.9 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -6, scale: 0.9 }}
+                          transition={{ duration: 0.2 }}
+                          className="flex items-center gap-2.5 mr-auto max-w-[70%]"
+                        >
+                          <div className="w-7 h-7 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-xs shrink-0 shadow-sm">
+                            {typingTeammate.avatar}
+                          </div>
+                          <div className="px-3.5 py-2 rounded-2xl rounded-tl-none bg-surface-secondary/90 border border-progress-track flex items-center gap-1.5 shadow-sm">
+                            <span className="text-[10px] text-text-muted font-mono font-semibold mr-1">{typingTeammate.name} is typing</span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-kaos-teal animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <span className="w-1.5 h-1.5 rounded-full bg-kaos-teal animate-bounce" style={{ animationDelay: '150ms' }} />
+                            <span className="w-1.5 h-1.5 rounded-full bg-kaos-teal animate-bounce" style={{ animationDelay: '300ms' }} />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
                     <div ref={messageEndRef} />
                   </div>
 
@@ -912,11 +1437,14 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
                   </div>
                 </>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-background-secondary">
-                  <span className="material-symbols-outlined text-4xl text-kaos-pink mb-2">forum</span>
-                  <h4 className="text-sm font-bold text-kaos-offwhite">No direct message threads selected</h4>
-                  <p className="text-xs text-text-secondary mt-1">Select a teammate explorer on the left to initiate private DM routes.</p>
-                </div>
+                <MessagesEmptyState
+                  onStartDirectMessage={handleStartDirectMessage}
+                  onOpenFindFriends={() => setShowFindFriends(true)}
+                  onNavigateToGroups={() => setActiveTab('groups')}
+                  onSelectSpot={onSelectSpot}
+                  suggestedUsers={INITIAL_EXPLORERS}
+                  masterSpots={masterSpots}
+                />
               )}
             </div>
           </>
@@ -943,35 +1471,47 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
               </div>
 
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {conversations
-                  .filter((c) => c.type === 'group')
-                  .map((group) => {
-                    const isSelected = activeConvId === group.id;
-                    return (
-                      <button
-                        key={group.id}
-                        onClick={() => {
-                          setActiveConvId(group.id);
-                          setActiveGroupTab('home');
-                        }}
-                        className={`w-full p-3 rounded-2xl text-left border transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                          isSelected
-                            ? 'bg-surface-secondary border-kaos-purple/30'
-                            : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-purple to-kaos-pink flex items-center justify-center text-xl shrink-0">
-                            {group.avatar}
+                <AnimatePresence mode="popLayout" initial={false}>
+                  {conversations
+                    .filter((c) => c.type === 'group')
+                    .map((group) => {
+                      const isSelected = activeConvId === group.id;
+                      return (
+                        <motion.button
+                          layout
+                          initial={{ opacity: 0, y: 14, scale: 0.96 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.92, y: -10 }}
+                          transition={{
+                            layout: { type: 'spring', stiffness: 360, damping: 28, mass: 0.7 },
+                            opacity: { duration: 0.2 },
+                            y: { type: 'spring', stiffness: 400, damping: 26 },
+                            scale: { duration: 0.18 },
+                          }}
+                          key={group.id}
+                          onClick={() => {
+                            setActiveConvId(group.id);
+                            setActiveGroupTab('home');
+                          }}
+                          className={`w-full p-3 rounded-2xl text-left border transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                            isSelected
+                              ? 'bg-surface-secondary border-kaos-purple/30 shadow-md'
+                              : 'bg-surface-primary border-transparent hover:bg-surface-secondary/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-kaos-purple to-kaos-pink flex items-center justify-center text-xl shrink-0 shadow-sm">
+                              {group.avatar}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-xs font-bold text-kaos-offwhite truncate">{group.name}</h4>
+                              <p className="text-[10px] text-text-secondary mt-0.5 truncate">{group.memberIds.length} active surveyors</p>
+                            </div>
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-bold text-kaos-offwhite truncate">{group.name}</h4>
-                            <p className="text-[10px] text-text-secondary mt-0.5 truncate">{group.memberIds.length} active surveyors</p>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                        </motion.button>
+                      );
+                    })}
+                </AnimatePresence>
               </div>
             </div>
 
@@ -993,21 +1533,32 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
                       </div>
                     </div>
 
-                    {/* Group Tab navigation: Home | Chat | Quests | Leaderboard | Members | Activity */}
-                    <div className="flex items-center gap-1 bg-surface-primary border border-progress-track p-1 rounded-xl shrink-0 overflow-x-auto scrollbar-none">
-                      {['home', 'chat', 'quests', 'leaderboard', 'members', 'activity'].map((sub) => (
-                        <button
-                          key={sub}
-                          onClick={() => setActiveGroupTab(sub as any)}
-                          className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer shrink-0 ${
-                            activeGroupTab === sub
-                              ? 'bg-kaos-purple text-white'
-                              : 'text-text-secondary hover:text-kaos-offwhite'
-                          }`}
-                        >
-                          {sub}
-                        </button>
-                      ))}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Group Tab navigation: Home | Chat | Quests | Leaderboard | Members | Activity */}
+                      <div className="flex items-center gap-1 bg-surface-primary border border-progress-track p-1 rounded-xl shrink-0 overflow-x-auto scrollbar-none">
+                        {['home', 'chat', 'quests', 'leaderboard', 'members', 'activity'].map((sub) => (
+                          <button
+                            key={sub}
+                            onClick={() => setActiveGroupTab(sub as any)}
+                            className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all cursor-pointer shrink-0 ${
+                              activeGroupTab === sub
+                                ? 'bg-kaos-purple text-white'
+                                : 'text-text-secondary hover:text-kaos-offwhite'
+                            }`}
+                          >
+                            {sub}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={() => handleExportChat(activeConv)}
+                        className="px-2.5 py-1.5 rounded-xl bg-surface-primary hover:bg-kaos-purple/20 text-kaos-offwhite hover:text-kaos-teal border border-progress-track hover:border-kaos-teal text-[10px] font-bold flex items-center gap-1 cursor-pointer shadow-md transition-all shrink-0 active:scale-95"
+                        title="Export group logs and field insights"
+                      >
+                        <span className="material-symbols-outlined text-xs">download</span>
+                        <span className="hidden md:inline">Export Chat</span>
+                      </button>
                     </div>
                   </div>
 
@@ -1087,41 +1638,121 @@ export const MessagesScreen: React.FC<MessagesScreenProps> = ({
                   {activeGroupTab === 'chat' && (
                     <>
                       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background-primary/40">
-                        <AnimatePresence mode="popLayout">
+                        <AnimatePresence initial={false} mode="popLayout">
                           {(chatMessages[activeConv.id] || []).map((msg) => {
                             const isMe = msg.senderId === 'me';
                             return (
                               <motion.div
                                 layout
-                                initial={{ opacity: 0, y: 15, scale: 0.96 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.92, y: -8 }}
-                                transition={{ duration: 0.22, ease: 'easeOut' }}
+                                initial={{ 
+                                  opacity: 0, 
+                                  x: isMe ? 28 : -28, 
+                                  y: 14, 
+                                  scale: 0.92 
+                                }}
+                                animate={{ 
+                                  opacity: 1, 
+                                  x: 0, 
+                                  y: 0, 
+                                  scale: 1 
+                                }}
+                                exit={{ 
+                                  opacity: 0, 
+                                  scale: 0.9, 
+                                  y: -8 
+                                }}
+                                transition={{ 
+                                  type: 'spring',
+                                  stiffness: isMe ? 480 : 400,
+                                  damping: 24,
+                                  mass: 0.65
+                                }}
                                 key={msg.id}
-                                className={`flex gap-3 max-w-[80%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+                                className={`flex gap-3 max-w-[82%] ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
                               >
-                                <div className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0">
+                                <motion.div 
+                                  initial={{ scale: 0, rotate: isMe ? 15 : -15 }}
+                                  animate={{ scale: 1, rotate: 0 }}
+                                  transition={{ type: 'spring', stiffness: 500, damping: 20, delay: 0.04 }}
+                                  className="w-8 h-8 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-sm shrink-0 shadow-sm"
+                                >
                                   {msg.senderAvatar}
-                                </div>
+                                </motion.div>
                                 <div className="space-y-1">
-                                  <div className="flex items-center gap-2">
+                                  <div className={`flex items-center gap-1.5 ${isMe ? 'justify-end' : 'justify-start'}`}>
                                     <span className="text-[10px] font-bold text-kaos-offwhite">{msg.senderName}</span>
                                     <span className="text-[8px] text-text-muted font-mono">{msg.timestamp}</span>
+                                    {isMe && (
+                                      <span
+                                        className="inline-flex items-center ml-0.5"
+                                        title={
+                                          msg.status === 'read'
+                                            ? 'Read by squad members'
+                                            : msg.status === 'sent'
+                                            ? 'Delivered to squad'
+                                            : 'Sending...'
+                                        }
+                                      >
+                                        {msg.status === 'read' ? (
+                                          <span className="material-symbols-outlined text-[13px] text-kaos-teal font-black drop-shadow">
+                                            done_all
+                                          </span>
+                                        ) : msg.status === 'sent' ? (
+                                          <span className="material-symbols-outlined text-[13px] text-white/70 font-semibold">
+                                            check
+                                          </span>
+                                        ) : (
+                                          <span className="material-symbols-outlined text-[11px] text-white/50 animate-spin">
+                                            sync
+                                          </span>
+                                        )}
+                                      </span>
+                                    )}
+                                    {!isMe && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-kaos-purple animate-ping" />
+                                    )}
                                   </div>
-                                  <div
-                                    className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                                  <motion.div
+                                    initial={{ scale: 0.97 }}
+                                    animate={{ scale: 1 }}
+                                    transition={{ type: 'spring', stiffness: 450, damping: 25 }}
+                                    className={`p-3 rounded-2xl text-xs leading-relaxed transition-all shadow-md ${
                                       isMe
-                                        ? 'bg-kaos-purple text-white rounded-tr-none shadow-md'
-                                        : 'bg-surface-secondary text-kaos-offwhite rounded-tl-none border border-progress-track'
+                                        ? 'bg-gradient-to-tr from-kaos-purple to-kaos-pink text-white rounded-tr-none'
+                                        : 'bg-surface-secondary/95 text-kaos-offwhite rounded-tl-none border border-kaos-purple/20 hover:border-kaos-purple/40'
                                     }`}
                                   >
                                     {msg.text}
-                                  </div>
+                                  </motion.div>
                                 </div>
                               </motion.div>
                             );
                           })}
                         </AnimatePresence>
+
+                        {/* Group Animated Typing Indicator */}
+                        <AnimatePresence>
+                          {typingTeammate && typingTeammate.convId === activeConv.id && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 12, scale: 0.9 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              exit={{ opacity: 0, y: -6, scale: 0.9 }}
+                              transition={{ duration: 0.2 }}
+                              className="flex items-center gap-2.5 mr-auto max-w-[70%]"
+                            >
+                              <div className="w-7 h-7 rounded-xl bg-surface-secondary border border-progress-track flex items-center justify-center text-xs shrink-0 shadow-sm">
+                                {typingTeammate.avatar}
+                              </div>
+                              <div className="px-3.5 py-2 rounded-2xl rounded-tl-none bg-surface-secondary/90 border border-progress-track flex items-center gap-1.5 shadow-sm">
+                                <span className="text-[10px] text-text-muted font-mono font-semibold mr-1">{typingTeammate.name} is typing</span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-kaos-purple animate-bounce" style={{ animationDelay: '0ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full bg-kaos-purple animate-bounce" style={{ animationDelay: '150ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full bg-kaos-purple animate-bounce" style={{ animationDelay: '300ms' }} />
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
                         <div ref={messageEndRef} />
                       </div>
 

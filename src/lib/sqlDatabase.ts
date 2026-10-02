@@ -2,7 +2,7 @@ import alasql from 'alasql';
 import { KAOS_SPOTS, KAOS_PERKS } from '../data/kaosData';
 import { MasterSpot, RecommendedSpot } from '../types';
 
-const STORAGE_KEY = 'kaos_sql_offline_cache';
+let STORAGE_KEY = 'kaos_sql_offline_cache';
 
 export interface SqlQueryResult<T = any> {
   success: boolean;
@@ -84,7 +84,11 @@ class KaosSqlDatabase {
   };
   private syncListeners: Set<(info: SqlSyncInfo) => void> = new Set();
 
-  public init() {
+  public init(userId?: string) {
+    if (userId) {
+      STORAGE_KEY = `kaos_sql_cache_${userId}`;
+      this.isInitialized = false; // Force re-init for new user
+    }
     if (this.isInitialized) return;
 
     try {
@@ -598,6 +602,41 @@ class KaosSqlDatabase {
     alasql(`UPDATE global_explorers SET xp = ? WHERE is_current_user = TRUE`, [stats.xp]);
 
     this.persist();
+  }
+
+  public setExplorerProgress(progress: { xp: number; level: number; streak: number; stamps_count: number; perks_claimed_count: number }) {
+    this.init();
+    try {
+      alasql(`
+        UPDATE explorer_progress
+        SET xp = ?, level = ?, streak = ?, stamps_count = ?, perks_claimed_count = ?, updated_at = ?
+        WHERE id = 'current_user'
+      `, [progress.xp, progress.level, progress.streak, progress.stamps_count, progress.perks_claimed_count, new Date().toISOString()]);
+      this.persist();
+    } catch (err) {
+      console.warn('Failed to set explorer progress:', err);
+    }
+  }
+
+  public setPassportStamps(stamps: any[]) {
+    this.init();
+    try {
+      if (Array.isArray(stamps)) {
+        alasql.tables.passport_stamps.data = stamps;
+        this.persist();
+      }
+    } catch (err) {
+      console.warn('Failed to set passport stamps:', err);
+    }
+  }
+
+  public getPassportStamps() {
+    this.init();
+    try {
+      return (alasql('SELECT * FROM passport_stamps') as any[]) || [];
+    } catch {
+      return [];
+    }
   }
 
   public claimPerk(perkId: string) {
@@ -1359,6 +1398,21 @@ class KaosSqlDatabase {
     try {
       localStorage.setItem('kaos_user_profile', JSON.stringify({ level, xp, streak }));
     } catch {}
+  }
+  public reset() {
+    try {
+      const tables = [
+        'spots', 'adventures', 'explorer_progress', 'passport_stamps',
+        'secret_perks', 'daily_quests', 'global_explorers',
+        'sql_query_history', 'search_history', 'explored_history'
+      ];
+      tables.forEach(t => {
+        try { alasql(`DROP TABLE IF EXISTS ${t}`); } catch {}
+      });
+      this.isInitialized = false;
+    } catch (err) {
+      console.error('SQL reset error:', err);
+    }
   }
 }
 

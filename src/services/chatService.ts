@@ -10,7 +10,10 @@ import {
   updateDoc, 
   where,
   serverTimestamp,
-  FieldValue
+  FieldValue,
+  getDocs,
+  writeBatch,
+  arrayUnion
 } from 'firebase/firestore';
 import { 
   Conversation, 
@@ -41,8 +44,12 @@ export const subscribeConversations = (userId: string, callback: (conversations:
   });
 };
 
+export const getMessagesQuery = (conversationId: string) => {
+  return query(collection(db, 'conversations', conversationId, 'messages'), orderBy('createdAt', 'asc'));
+};
+
 export const subscribeToMessages = (conversationId: string, callback: (messages: ChatMessage[]) => void) => {
-  const q = query(collection(db, 'conversations', conversationId, 'messages'), orderBy('createdAt', 'asc'));
+  const q = getMessagesQuery(conversationId);
   return onSnapshot(q, (snapshot) => {
     const msgs = snapshot.docs.map(doc => {
       const data = doc.data();
@@ -95,8 +102,39 @@ export const deleteConversation = async (conversationId: string) => {
   return deleteDoc(doc(db, 'conversations', conversationId));
 };
 
-export const markConversationAsRead = async (conversationId: string) => {
-  return updateDoc(doc(db, 'conversations', conversationId), { unreadCount: 0 });
+export const markMessagesAsRead = async (conversationId: string, currentUserId: string) => {
+  try {
+    const allMsgs = await getDocs(collection(db, 'conversations', conversationId, 'messages'));
+    const batch = writeBatch(db);
+    let count = 0;
+    allMsgs.docs.forEach((d) => {
+      const data = d.data();
+      if (data.senderId !== currentUserId && data.status !== 'read') {
+        batch.update(d.ref, {
+          status: 'read',
+          readAt: serverTimestamp(),
+          readBy: arrayUnion(currentUserId)
+        });
+        count++;
+      }
+    });
+    if (count > 0) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn('Real-time markMessagesAsRead error:', err);
+  }
+};
+
+export const markConversationAsRead = async (conversationId: string, currentUserId?: string) => {
+  try {
+    await updateDoc(doc(db, 'conversations', conversationId), { unreadCount: 0 });
+    if (currentUserId) {
+      await markMessagesAsRead(conversationId, currentUserId);
+    }
+  } catch (err) {
+    console.warn('markConversationAsRead error:', err);
+  }
 };
 
 export const archiveConversation = async (conversationId: string) => {
@@ -117,6 +155,25 @@ export const createDirectConversation = async (userId: string, targetUser: ChatU
       senderId: userId,
       senderName: '',
       createdAt: new Date().toISOString()
+    }
+  });
+};
+
+export const setTypingStatus = async (conversationId: string, userId: string, isTyping: boolean) => {
+  return updateDoc(doc(db, 'conversations', conversationId), {
+    [`typingStatus.${userId}`]: isTyping
+  });
+};
+
+export const subscribeToConversation = (conversationId: string, callback: (conversation: Conversation) => void) => {
+  return onSnapshot(doc(db, 'conversations', conversationId), (snapshot) => {
+    if (snapshot.exists()) {
+      const data = snapshot.data();
+      let updatedAt = data.updatedAt;
+      if (updatedAt && typeof updatedAt.toDate === 'function') {
+        updatedAt = updatedAt.toDate().toISOString();
+      }
+      callback({ id: snapshot.id, ...data, updatedAt } as Conversation);
     }
   });
 };

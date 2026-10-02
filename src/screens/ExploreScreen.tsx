@@ -1,10 +1,13 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Map, AdvancedMarker, Pin, InfoWindow } from '@vis.gl/react-google-maps';
 import { KAOS_SPOTS } from '../data/kaosData';
 import { MasterSpot } from '../types';
 import { DailyQuests } from '../components/DailyQuests';
 import { ArCompassWidget } from '../components/ArCompassWidget';
+import { ArDiscoveryOverlay } from '../components/ArDiscoveryOverlay';
 import { GeoProximityNotifier } from '../components/GeoProximityNotifier';
+import { ActivityFeed } from '../components/ActivityFeed';
 
 interface ExploreScreenProps {
   onSpotSelected: (spot: MasterSpot) => void;
@@ -22,6 +25,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [visibleLimit, setVisibleLimit] = useState(16);
+  const [isArVisionOpen, setIsArVisionOpen] = useState(false);
 
   // Controlled map state
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number }>({
@@ -109,10 +113,18 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           </button>
         </div>
 
-        {activeSubTab === 'archive' && (
+        {activeSubTab === 'archive' ? (
           <span className="text-[10px] font-mono px-3 py-1 rounded-full bg-[#F05423]/10 border border-[#F05423]/30 text-[#F05423] font-bold">
             1,000+ Landmarked Beacons
           </span>
+        ) : (
+          <button
+            onClick={() => setIsArVisionOpen(true)}
+            className="px-4 py-2 rounded-xl bg-[#F05423]/10 border border-[#F05423]/30 text-[#F05423] text-xs font-bold hover:bg-[#F05423] hover:text-white transition-all cursor-pointer flex items-center gap-2"
+          >
+            <span className="material-symbols-outlined text-[16px] animate-pulse">radar</span>
+            <span>AR Vision</span>
+          </button>
         )}
       </div>
 
@@ -122,13 +134,35 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Hero Discovery Banner */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Main Explorer Telemetry Card */}
-            <div className="lg:col-span-12 bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-6 shadow-xl flex flex-col justify-between min-h-[180px]">
-              <div className="space-y-2">
+            {/* Main Explorer Telemetry Card with Swipe Navigation */}
+            <motion.div 
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              onDragEnd={(_, info) => {
+                const threshold = 50;
+                if (info.offset.x > threshold) {
+                  const currentIndex = KAOS_SPOTS.findIndex(s => s.id === 'senate-house');
+                  const prevIndex = (currentIndex - 1 + KAOS_SPOTS.length) % KAOS_SPOTS.length;
+                  onSpotSelected(KAOS_SPOTS[prevIndex]);
+                  onShowToast(`Cycle Detected: Scanning ${KAOS_SPOTS[prevIndex].title}`);
+                } else if (info.offset.x < -threshold) {
+                  const currentIndex = KAOS_SPOTS.findIndex(s => s.id === 'senate-house');
+                  const nextIndex = (currentIndex + 1) % KAOS_SPOTS.length;
+                  onSpotSelected(KAOS_SPOTS[nextIndex]);
+                  onShowToast(`Cycle Detected: Scanning ${KAOS_SPOTS[nextIndex].title}`);
+                }
+              }}
+              whileTap={{ scale: 0.98, cursor: 'grabbing' }}
+              className="lg:col-span-12 bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-6 shadow-xl flex flex-col justify-between min-h-[180px] cursor-grab relative overflow-hidden group"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-[#F05423]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+              <div className="space-y-2 relative z-10">
                 <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-500 uppercase font-bold tracking-wider">
                   <span className="text-[#F05423]">Chennai Sector</span>
                   <span aria-hidden="true">·</span>
                   <span>Acoustic Geofence Active</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="text-cyan-400 animate-pulse">Swipe to Cycle Beacons</span>
                 </div>
                 <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight leading-tight">
                   Every street corner holds a century of whispers.
@@ -137,6 +171,19 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                   Explore hidden Indo-Saracenic vaulted corridors, century-old wood-fired coffee roasteries, and sacred temple tanks aligned with ancient cosmology.
                 </p>
               </div>
+              
+              {/* Visual swipe indicators */}
+              <div className="absolute left-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-20 transition-opacity">
+                <span className="material-symbols-outlined text-white">chevron_left</span>
+              </div>
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-20 transition-opacity">
+                <span className="material-symbols-outlined text-white">chevron_right</span>
+              </div>
+            </motion.div>
+
+            {/* Live Social Grid Activity */}
+            <div className="lg:col-span-12">
+              <ActivityFeed />
             </div>
 
             {/* Daily Quests Segment */}
@@ -239,38 +286,48 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
           {viewMode === 'list' ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {paginatedSpots.map((spot) => (
-                  <div
-                    key={spot.id}
-                    onClick={() => onSpotSelected(spot)}
-                    className="bg-[#1C1A1F] border border-[#26242C] hover:border-zinc-700 rounded-2xl overflow-hidden cursor-pointer transition-all hover:-translate-y-0.5 group flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="relative h-36 w-full bg-[#121114]">
-                        <img
-                          src={spot.imageUrl}
-                          alt={spot.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                        <span className="absolute top-2 left-2 bg-black/70 text-[#F05423] font-mono text-[9px] font-bold px-2 py-0.5 rounded-full border border-[#F05423]/30">
-                          {spot.zone}
-                        </span>
+                <AnimatePresence mode="popLayout">
+                  {paginatedSpots.map((spot) => (
+                    <motion.div
+                      key={spot.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      whileHover={{ y: -4, scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => onSpotSelected(spot)}
+                      className="bg-[#1C1A1F] border border-[#26242C] hover:border-[#F05423]/50 rounded-2xl overflow-hidden cursor-pointer transition-all group flex flex-col justify-between shadow-lg"
+                    >
+                      <div>
+                        <div className="relative h-36 w-full bg-[#121114]">
+                          <img
+                            src={spot.imageUrl}
+                            alt={spot.title}
+                            className="w-full h-full object-cover group-hover:opacity-80 transition-opacity duration-300"
+                          />
+                          <span className="absolute top-2 left-2 bg-black/70 text-[#F05423] font-mono text-[9px] font-bold px-2 py-0.5 rounded-full border border-[#F05423]/30">
+                            {spot.zone}
+                          </span>
+                        </div>
+                        <div className="p-3 space-y-1">
+                          <h4 className="font-bold text-xs text-white group-hover:text-[#F05423] transition-colors line-clamp-1">
+                            {spot.title}
+                          </h4>
+                          <p className="text-[10px] text-zinc-400 line-clamp-2 leading-relaxed">
+                            {spot.description}
+                          </p>
+                        </div>
                       </div>
-                      <div className="p-3 space-y-1">
-                        <h4 className="font-bold text-xs text-white group-hover:text-[#F05423] transition-colors line-clamp-1">
-                          {spot.title}
-                        </h4>
-                        <p className="text-[10px] text-zinc-400 line-clamp-2 leading-relaxed">
-                          {spot.description}
-                        </p>
+                      <div className="p-3 pt-0 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+                        <span>{spot.category}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse"></span>
+                          <span className="text-amber-400 font-bold">+{spot.xp} XP</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="p-3 pt-0 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
-                      <span>{spot.category}</span>
-                      <span className="text-amber-400 font-bold">+{spot.xp} XP</span>
-                    </div>
-                  </div>
-                ))}
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               </div>
 
               {/* Load More Button */}
@@ -328,6 +385,16 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             </div>
           )}
         </div>
+      )}
+      {/* AR Vision Discovery Overlay */}
+      {isArVisionOpen && (
+        <ArDiscoveryOverlay 
+          onClose={() => setIsArVisionOpen(false)}
+          onSpotSelected={(spot) => {
+            setIsArVisionOpen(false);
+            onSpotSelected(spot);
+          }}
+        />
       )}
     </div>
   );

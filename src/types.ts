@@ -69,3 +69,15 @@ export interface Quest {
   isCompleted: boolean;
 }
 
+
+export interface ActivityFeedItem {
+  id: string;
+  explorerId: string;
+  explorerName: string;
+  explorerAvatar?: string;
+  actionType: 'check_in' | 'quest_completion' | 'discovery';
+  locationName: string;
+  zone?: string;
+  timestamp: string;
+  xpGained: number;
+}

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { sqlDb, SqlQueryResult } from '../lib/sqlDatabase';
 import { SqlVisualizer } from './SqlVisualizer';
 import { SqlBackupPanel } from './SqlBackupPanel';
+import { KaosAppIcon } from './KaosAppIcon';
 
 interface SqlExplorerModalProps {
   isOpen: boolean;
@@ -90,9 +91,7 @@ export const SqlExplorerModal: React.FC<SqlExplorerModalProps> = ({
         {/* Modal Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-[#26242C] pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
-              <span className="material-symbols-outlined text-[24px]">database</span>
-            </div>
+            <KaosAppIcon size={38} />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-white tracking-tight">

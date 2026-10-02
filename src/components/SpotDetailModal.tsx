@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MasterSpot } from '../types';
 import { SpotShareModal } from './SpotShareModal';
 import { useSoundscape } from '../context/SoundscapeContext';
@@ -82,36 +83,44 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
     };
   }, []);
 
-  if (!spot) return null;
+  const lastSpotRef = useRef<MasterSpot | null>(null);
+  if (spot) {
+    lastSpotRef.current = spot;
+  }
+  const currentModalSpot = spot || lastSpotRef.current;
 
-  const isCurrentSpotPlaying = currentSpot?.id === spot.id && isPlaying;
+  const isCurrentSpotPlaying = currentModalSpot ? currentSpot?.id === currentModalSpot.id && isPlaying : false;
 
   const handleToggleSoundscape = () => {
-    if (currentSpot?.id === spot.id) {
+    if (!currentModalSpot) return;
+    if (currentSpot?.id === currentModalSpot.id) {
       togglePlay();
     } else {
-      playSpotSoundscape(spot);
+      playSpotSoundscape(currentModalSpot);
     }
   };
 
   const handleOpenMixer = () => {
-    if (currentSpot?.id !== spot.id) {
-      playSpotSoundscape(spot);
+    if (!currentModalSpot) return;
+    if (currentSpot?.id !== currentModalSpot.id) {
+      playSpotSoundscape(currentModalSpot);
     }
     setIsMixerOpen(true);
   };
 
   const handleToggleSave = () => {
-    const newState = sqlDb.toggleSaveSpot(spot.id);
+    if (!currentModalSpot) return;
+    const newState = sqlDb.toggleSaveSpot(currentModalSpot.id);
     setIsSaved(newState);
     onShowToast(
       newState
-        ? `Saved "${spot.title}" to Explorer Passport!`
-        : `Removed "${spot.title}" from Passport.`
+        ? `Added "${currentModalSpot.title}" to Favorites! ❤️`
+        : `Removed "${currentModalSpot.title}" from Favorites.`
     );
   };
 
   const handleToggleSpeech = () => {
+    if (!currentModalSpot) return;
     if (!('speechSynthesis' in window)) {
       onShowToast('Text-to-speech voice guide is not supported in this browser.');
       return;
@@ -123,7 +132,7 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
       onShowToast('Voice guide paused.');
     } else {
       window.speechSynthesis.cancel();
-      const textToRead = `${spot.title}. Located in ${spot.zone} sector. ${spot.description}. Historical Chronicle: ${spot.fullStory}. Curator commentary: ${spot.audioGuideScript}`;
+      const textToRead = `${currentModalSpot.title}. Located in ${currentModalSpot.zone} sector. ${currentModalSpot.description}. Historical Chronicle: ${currentModalSpot.fullStory}. Curator commentary: ${currentModalSpot.audioGuideScript}`;
       const utterance = new SpeechSynthesisUtterance(textToRead);
       utterance.rate = 0.95;
       utterance.pitch = 1.0;
@@ -133,13 +142,14 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
 
       window.speechSynthesis.speak(utterance);
       setIsSpeaking(true);
-      onShowToast(`Playing voice guide for ${spot.title}`);
+      onShowToast(`Playing voice guide for ${currentModalSpot.title}`);
     }
   };
 
   const handleNavigate = () => {
+    if (!currentModalSpot) return;
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
-      spot.title + ' ' + spot.zone + ' Chennai'
+      currentModalSpot.title + ' ' + currentModalSpot.zone + ' Chennai'
     )}`;
     window.open(mapsUrl, '_blank');
   };
@@ -154,21 +164,39 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans select-none"
-        onClick={handleClose}
-      >
-        <div
-          className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin shadow-2xl relative"
-          onClick={(e) => e.stopPropagation()}
+      <AnimatePresence>
+        {spot && currentModalSpot && (
+        <motion.div
+          key="spot-detail-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans select-none"
+          onClick={handleClose}
         >
-          {/* Header Image Hero */}
-          <div className="relative h-56 w-full">
-            <img
-              src={spot.imageUrl}
-              alt={spot.title}
-              className="w-full h-full object-cover rounded-t-3xl"
-            />
+          <motion.div
+            key="spot-detail-modal"
+            id="spot-detail-modal"
+            initial={{ opacity: 0, y: 56, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 36, scale: 0.96 }}
+            transition={{
+              type: 'spring',
+              damping: 26,
+              stiffness: 340,
+              mass: 0.85,
+            }}
+            className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl w-full max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header Image Hero */}
+            <div className="relative h-56 w-full">
+              <img
+                src={currentModalSpot.imageUrl}
+                alt={currentModalSpot.title}
+                className="w-full h-full object-cover rounded-t-3xl"
+              />
             <div className="absolute inset-0 bg-gradient-to-t from-[#1C1A1F] via-[#1C1A1F]/30 to-transparent" />
 
             {/* Top Controls Overlay */}
@@ -183,13 +211,13 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
                   onClick={handleToggleSave}
                   className={`w-9 h-9 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
                     isSaved
-                      ? 'bg-[#F05423] text-white border-[#F05423] shadow-md shadow-[#F05423]/30 scale-105'
+                      ? 'bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/30 scale-105'
                       : 'bg-black/60 backdrop-blur-md border-white/20 text-white hover:bg-black/80'
                   }`}
-                  title={isSaved ? 'Saved to Passport' : 'Save Spot'}
+                  title={isSaved ? 'Remove from Favorites' : 'Add to Favorites'}
                 >
                   <span className="material-symbols-outlined text-lg">
-                    {isSaved ? 'bookmark' : 'bookmark_border'}
+                    {isSaved ? 'favorite' : 'favorite_border'}
                   </span>
                 </button>
 
@@ -388,19 +416,24 @@ export const SpotDetailModal: React.FC<SpotDetailModalProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
+    )}
+    </AnimatePresence>
 
-      {/* Share Modal Dialog */}
+    {/* Share Modal Dialog */}
+    {currentModalSpot && (
       <SpotShareModal
-        spot={spot}
+        spot={currentModalSpot}
         isOpen={isShareOpen}
         onClose={() => setIsShareOpen(false)}
         onShowToast={onShowToast}
         onOpenShareToChat={onOpenShareToChat}
       />
-    </>
-  );
+    )}
+  </>
+);
 };
 
 export default SpotDetailModal;
+

@@ -60,9 +60,9 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# STEP 2: Run Production Build
+# STEP 2: Pre-Build Type & Asset Validation
 # ------------------------------------------------------------------------------
-echo -e "\n${CYAN}[STEP 2/3] Executing Production Vite Compilation...${NC}"
+echo -e "\n${CYAN}[STEP 2/4] Executing Typecheck & Asset Integrity Validation...${NC}"
 
 # Ensure node_modules exists
 if [ ! -d "node_modules" ]; then
@@ -70,7 +70,23 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Run clean production build
+# Run explicit pre-build check
+echo -e "${CYAN}Running 'npm run build:check'...${NC}"
+npm run build:check
+
+CHECK_STATUS=$?
+if [ $CHECK_STATUS -ne 0 ]; then
+    echo -e "\n${RED}❌ Error: 'npm run build:check' failed with exit code $CHECK_STATUS${NC}"
+    exit $CHECK_STATUS
+fi
+
+echo -e "${GREEN}✓ Typecheck and pre-build asset validation passed.${NC}"
+
+# ------------------------------------------------------------------------------
+# STEP 3: Run Production Build
+# ------------------------------------------------------------------------------
+echo -e "\n${CYAN}[STEP 3/4] Executing Production Vite Compilation...${NC}"
+
 echo -e "${CYAN}Running 'npm run build'...${NC}"
 npm run build
 
@@ -83,9 +99,9 @@ fi
 echo -e "${GREEN}✓ Vite production build finished successfully.${NC}"
 
 # ------------------------------------------------------------------------------
-# STEP 3: Verify Output Bundle (Dist Integrity Check)
+# STEP 4: Verify Output Bundle (Dist Integrity Check)
 # ------------------------------------------------------------------------------
-echo -e "\n${CYAN}[STEP 3/3] Verifying Output Bundle Integrity ('dist')...${NC}"
+echo -e "\n${CYAN}[STEP 4/4] Verifying Output Bundle Integrity ('dist')...${NC}"
 
 if [ ! -d "dist" ]; then
     echo -e "${RED}❌ Error: 'dist' folder was not generated! Build failed.${NC}"

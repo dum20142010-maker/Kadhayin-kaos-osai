@@ -3,6 +3,9 @@ import { sqlDb, DailyQuest } from '../lib/sqlDatabase';
 import { KAOS_SPOTS } from '../data/kaosData';
 import { MasterSpot } from '../types';
 
+import { logActivity } from '../services/activityService';
+import { auth } from '../lib/firebase';
+
 interface DailyQuestsProps {
   onAwardXp: (amount: number, reason: string) => void;
   onSpotSelected: (spot: MasterSpot) => void;
@@ -51,6 +54,16 @@ export const DailyQuests: React.FC<DailyQuestsProps> = ({
     if (result.success) {
       // Award XP directly into the application's central XP state
       onAwardXp(result.xpAwarded, result.questTitle);
+
+      // Log to global activity feed
+      logActivity({
+        explorerId: auth.currentUser?.uid || 'anonymous',
+        explorerName: auth.currentUser?.displayName || 'Explorer',
+        actionType: 'quest_completion',
+        locationName: quest.title,
+        zone: quest.zone,
+        xpGained: result.xpAwarded
+      });
 
       // Refresh quests from SQL table
       setQuests((prev) =>

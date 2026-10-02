@@ -18,10 +18,13 @@ import { SpotDetailModal } from './components/SpotDetailModal';
 import { ShareToChatModal } from './components/ShareToChatModal';
 import { SqlExplorerModal } from './components/SqlExplorerModal';
 import { CommandPalette } from './components/CommandPalette';
+import { NavigationRdModal } from './components/NavigationRdModal';
+import { ThemeEngineModal } from './components/ThemeEngineModal';
 import { SoundscapeMiniPlayer } from './components/SoundscapeMiniPlayer';
 import { LevelUpCelebrationModal } from './components/LevelUpCelebrationModal';
 import { ActiveQuestHud } from './components/ActiveQuestHud';
 import { QuestBox } from './components/QuestBox';
+import { OnboardingTour } from './components/OnboardingTour';
 import { SoundscapeProvider } from './context/SoundscapeContext';
 import { useOfflineStatus } from './hooks/useOfflineStatus';
 import { sqlDb } from './lib/sqlDatabase';
@@ -31,6 +34,8 @@ import { buildKaosContext, KaosAppContext } from './services/kaosContext';
 import { KAOS_SPOTS } from './data/kaosData';
 import { db, auth } from './lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { fetchUserProgressFromCloud, saveUserProgressToCloud } from './services/userProgressSync';
 
 const tabVariants = {
   initial: {
@@ -61,19 +66,100 @@ const tabVariants = {
 const GOOGLE_MAPS_API_KEY =
   import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyC-8sz-WC5Bh4KEuFafiB15MIPr2rE-1Mk';
 
+import { LoadingScreen } from './components/LoadingScreen';
+import { LoginScreen } from './screens/LoginScreen';
+
 export function AppContent() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [currentTab, setCurrentTab] = useState<TabType>('home');
   const [selectedSpot, setSelectedSpot] = useState<MasterSpot | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    return localStorage.getItem('kaos_onboarding_completed') !== 'true';
+  });
+
+  // ... (rest of states preserved)
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isHandleSetupOpen, setIsHandleSetupOpen] = useState(false);
-
-  // Standalone Chat Sharing State
   const [shareToChatAttachment, setShareToChatAttachment] = useState<ChatAttachment | null>(null);
   const [targetChatConversationId, setTargetChatConversationId] = useState<string | null>(null);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(2);
-
-  // Recent user action telemetry tracker for KAOS Bot context
   const [recentActions, setRecentActions] = useState<string[]>(['Opened KAOS Exploration App']);
+  const [isNavRdOpen, setIsNavRdOpen] = useState(false);
+  const [navRdQuery, setNavRdQuery] = useState('');
+  const [navRdType, setNavRdType] = useState<'navigation' | 'rd'>('navigation');
+  const [isThemeEngineOpen, setIsThemeEngineOpen] = useState(false);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      let activeUser = u;
+      if (!activeUser && localStorage.getItem('kaos_demo_session') === 'true') {
+        activeUser = {
+          uid: 'demo-cadet-explorer-uid',
+          email: 'cadet.explorer@kaos.grid',
+          displayName: 'Cadet Explorer',
+          emailVerified: true,
+          isAnonymous: false,
+          getIdToken: async () => 'mock-token',
+        } as any;
+      }
+
+      if (activeUser) {
+        // 1. Initialize user-specific isolated SQL engine
+        sqlDb.init(activeUser.uid);
+        
+        // Fetch cloud user progress (streak, xp, stamps, active quests)
+        await fetchUserProgressFromCloud(activeUser.uid);
+
+        const profile = sqlDb.getProfile();
+        setLevel(profile.level || 1);
+        setXp(profile.xp || 0);
+        setStreak(profile.streak || 3);
+
+        // 2. Pre-fetch chat history to prevent "flicker" to default bot message
+        try {
+          const docRef = doc(db, 'users', activeUser.uid, 'kaosBotHistory', 'session');
+          const snap = await getDoc(docRef);
+          if (snap.exists() && snap.data().messages) {
+            const remoteMessages = snap.data().messages;
+            if (Array.isArray(remoteMessages) && remoteMessages.length > 0) {
+              setKaosBotMessages(remoteMessages);
+            }
+          }
+        } catch (err) {
+          console.warn('Silent sync error during boot:', err);
+        }
+        
+        setUser(activeUser);
+      } else {
+        sqlDb.reset();
+        setUser(null);
+      }
+
+      // 3. Maintain loading pulse for visual stability and directional entrance
+      timer = setTimeout(() => {
+        setAuthLoading(false);
+      }, 800);
+    });
+
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  // Sync progress changes to cloud Firestore
+  useEffect(() => {
+    if (!user) return;
+    const handleSyncChange = () => {
+      saveUserProgressToCloud(user.uid);
+    };
+    window.addEventListener('kaos-sql-sync-change', handleSyncChange);
+    return () => {
+      window.removeEventListener('kaos-sql-sync-change', handleSyncChange);
+    };
+  }, [user]);
 
   // Globally persisted active dynamic quest states
   const [activeQuest, setActiveQuest] = useState<any | null>(() => {
@@ -89,10 +175,10 @@ export function AppContent() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Level & XP State
-  const [level, setLevel] = useState<number>(() => sqlDb.getProfile().level || 1);
-  const [xp, setXp] = useState<number>(() => sqlDb.getProfile().xp || 0);
-  const [streak, setStreak] = useState<number>(() => sqlDb.getProfile().streak || 3);
+  // Level & XP State (Default initial values - updated during auth pulse)
+  const [level, setLevel] = useState<number>(1);
+  const [xp, setXp] = useState<number>(0);
+  const [streak, setStreak] = useState<number>(3);
 
   // Persistent, Globally maintained chat messages for KAOS Bot screen
   const [kaosBotMessages, setKaosBotMessages] = useState<any[]>([
@@ -120,34 +206,8 @@ export function AppContent() {
     setRecentActions((prev) => [...prev.slice(-6), action]);
   };
 
-  // Initialize Client SQL Database on app startup
+  // Persist KAOS Bot messages to Firestore as they change
   useEffect(() => {
-    sqlDb.init();
-  }, []);
-
-  // Load & persist KAOS Bot messages with Firestore across sessions
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (user) => {
-      if (user) {
-        try {
-          const docRef = doc(db, 'users', user.uid, 'kaosBotHistory', 'session');
-          const snap = await getDoc(docRef);
-          if (snap.exists() && snap.data().messages) {
-            const remoteMessages = snap.data().messages;
-            if (Array.isArray(remoteMessages) && remoteMessages.length > 0) {
-              setKaosBotMessages(remoteMessages);
-            }
-          }
-        } catch (err) {
-          console.error('Failed to load chat history from Firestore:', err);
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const user = auth.currentUser;
     if (user && kaosBotMessages.length > 1) {
       const docRef = doc(db, 'users', user.uid, 'kaosBotHistory', 'session');
       setDoc(docRef, { messages: kaosBotMessages, updatedAt: new Date().toISOString() }, { merge: true })
@@ -155,7 +215,7 @@ export function AppContent() {
           console.error('Failed to persist chat history to Firestore:', err);
         });
     }
-  }, [kaosBotMessages]);
+  }, [kaosBotMessages, user]);
 
   const [showQuestBox, setShowQuestBox] = useState<boolean>(false);
 
@@ -292,6 +352,19 @@ export function AppContent() {
                       return copy;
                     });
                   }
+                  if (parsed.sources || parsed.searchQueries) {
+                    setKaosBotMessages((prev) => {
+                      const copy = [...prev];
+                      if (copy.length > 0 && copy[copy.length - 1].sender === 'bot') {
+                        copy[copy.length - 1] = {
+                          ...copy[copy.length - 1],
+                          sources: parsed.sources || copy[copy.length - 1].sources,
+                          searchQueries: parsed.searchQueries || copy[copy.length - 1].searchQueries,
+                        };
+                      }
+                      return copy;
+                    });
+                  }
                 } catch {
                   // Ignore JSON parse error
                 }
@@ -305,7 +378,12 @@ export function AppContent() {
         setKaosBotMessages((prev) => {
           const copy = [...prev];
           if (copy.length > 0 && copy[copy.length - 1].sender === 'bot') {
-            copy[copy.length - 1] = { ...copy[copy.length - 1], text: fullText };
+            copy[copy.length - 1] = {
+              ...copy[copy.length - 1],
+              text: fullText,
+              sources: data.sources || [],
+              searchQueries: data.searchQueries || [],
+            };
           }
           return copy;
         });
@@ -377,228 +455,288 @@ export function AppContent() {
   );
 
   return (
-    <SoundscapeProvider>
-      <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
-        <div className="min-h-screen bg-background-primary text-text-primary flex flex-col font-sans selection:bg-kaos-primary/10 selection:text-text-primary">
-          {/* Top Offline Notification Toast */}
-          {isOffline && (
-            <div className="bg-amber-500/20 border-b border-amber-500/40 text-amber-300 text-xs py-1.5 px-4 text-center font-mono font-medium flex items-center justify-center gap-2">
-              <span className="material-symbols-outlined text-sm">wifi_off</span>
-              <span>Offline Mode Active: All 1,000+ Chennai places & soundscapes remain accessible</span>
-            </div>
-          )}
+    <AnimatePresence mode="wait">
+      {authLoading ? (
+        <LoadingScreen key="loading" />
+      ) : !user ? (
+        <motion.div 
+          key="login"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="w-full"
+        >
+          <LoginScreen />
+        </motion.div>
+      ) : (
+        <motion.div 
+          key="app"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="w-full"
+        >
+          <SoundscapeProvider>
+            <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
+              <div className="min-h-screen bg-background-primary text-text-primary flex flex-col font-sans selection:bg-kaos-primary/10 selection:text-text-primary">
+                {showOnboarding && (
+                  <OnboardingTour onComplete={() => setShowOnboarding(false)} />
+                )}
+                {/* Top Offline Notification Toast */}
+                {isOffline && (
+                  <div className="bg-amber-500/20 border-b border-amber-500/40 text-amber-300 text-xs py-1.5 px-4 text-center font-mono font-medium flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-sm">wifi_off</span>
+                    <span>Offline Mode Active: All 1,000+ Chennai places & soundscapes remain accessible</span>
+                  </div>
+                )}
 
-          {/* Floating Toast Notification */}
-          {toastMessage && (
-            <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#1C1A1F]/95 border border-[#F05423]/50 text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-200 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#F05423] animate-ping" />
-              <span>{toastMessage}</span>
-            </div>
-          )}
+                {/* Floating Toast Notification */}
+                {toastMessage && (
+                  <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-[#1C1A1F]/95 border border-[#F05423]/50 text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-200 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[#F05423] animate-ping" />
+                    <span>{toastMessage}</span>
+                  </div>
+                )}
 
-          {/* Active Persistent Quest HUD Bar */}
-          {activeQuest && !showQuestBox && (
-            <ActiveQuestHud
-              quest={activeQuest}
-              onComplete={handleVerifyQuest}
-              onSkip={() => {
-                localStorage.removeItem('kaos_active_quest');
-                setActiveQuest(null);
-                showToast('Dynamic quest skipped.');
-              }}
-              onNavigateTab={(tab) => {
-                setCurrentTab(tab);
-                logAction(`Switched tab to ${tab}`);
-              }}
-              onShowToast={showToast}
-            />
-          )}
-
-          {/* Header Bar */}
-          <Header
-            currentTab={currentTab}
-            onTabSelected={(tab) => {
-              if (tab === 'messages') setUnreadChatCount(0);
-              setCurrentTab(tab);
-              logAction(`Navigated to ${tab} tab`);
-            }}
-            level={level}
-            streak={streak}
-            onOpenSqlExplorer={() => setSqlExplorerOpen(true)}
-            onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-            unreadChatCount={unreadChatCount}
-          />
-
-          {/* Main Animated View Area */}
-          <main className="flex-1 w-full max-w-6xl mx-auto relative">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={currentTab}
-                variants={tabVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="w-full h-full"
-              >
-                {currentTab === 'home' && (
-                  <HomeScreen
-                    onShowToast={showToast}
-                    onNavigateTab={(tab) => setCurrentTab(tab)}
-                    onSelectSpot={(spot) => setSelectedSpot(spot)}
-                    onStartQuest={(quest) => {
-                      setActiveQuest(quest);
-                      setShowQuestBox(true);
+                {/* Active Persistent Quest HUD Bar */}
+                {activeQuest && !showQuestBox && (
+                  <ActiveQuestHud
+                    quest={activeQuest}
+                    onComplete={handleVerifyQuest}
+                    onSkip={() => {
+                      localStorage.removeItem('kaos_active_quest');
+                      setActiveQuest(null);
+                      showToast('Dynamic quest skipped.');
                     }}
-                    onOpenNotifications={() => setIsNotificationsOpen(true)}
-                    userLevel={level}
-                    userXp={xp}
-                  />
-                )}
-                {currentTab === 'explore' && (
-                  <ExploreScreen
-                    onSpotSelected={(spot) => {
-                      setSelectedSpot(spot);
-                      logAction(`Selected spot ${spot.title}`);
+                    onNavigateTab={(tab) => {
+                      setCurrentTab(tab);
+                      logAction(`Switched tab to ${tab}`);
                     }}
-                    onAwardXp={handleAwardXp}
                     onShowToast={showToast}
                   />
                 )}
-                {currentTab === 'map' && (
-                  <MapScreen onShowToast={showToast} onAwardXp={handleAwardXp} />
-                )}
-                {currentTab === 'friends' && (
-                  <NanbarScreen
-                    onShowToast={showToast}
-                    onSelectSpot={(spot) => {
-                      setSelectedSpot(spot);
-                      logAction(`Selected spot ${spot.title} from chat`);
-                    }}
-                    onSelectQuest={(quest) => {
-                      setActiveQuest(quest);
-                      setShowQuestBox(true);
-                      logAction(`Opened quest ${quest.title} from chat`);
-                    }}
-                    onNavigateToMap={() => setCurrentTab('map')}
-                    initialConversationId={targetChatConversationId}
-                    masterSpots={KAOS_SPOTS}
+
+                {/* Header Bar */}
+                <Header
+                  currentTab={currentTab}
+                  onTabSelected={(tab) => {
+                    if (tab === 'messages') setUnreadChatCount(0);
+                    setCurrentTab(tab);
+                    logAction(`Navigated to ${tab} tab`);
+                  }}
+                  level={level}
+                  streak={streak}
+                  onOpenSqlExplorer={() => setSqlExplorerOpen(true)}
+                  onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+                  unreadChatCount={unreadChatCount}
+                  onOpenThemeEngine={() => setIsThemeEngineOpen(true)}
+                />
+
+                {/* Main Animated View Area */}
+                <main className="flex-1 w-full max-w-6xl mx-auto relative">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={currentTab}
+                      variants={tabVariants}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      className="w-full h-full"
+                    >
+                      {currentTab === 'home' && (
+                        <HomeScreen
+                          onShowToast={showToast}
+                          onNavigateTab={(tab) => setCurrentTab(tab)}
+                          onSelectSpot={(spot) => setSelectedSpot(spot)}
+                          onStartQuest={(quest) => {
+                            setActiveQuest(quest);
+                            setShowQuestBox(true);
+                          }}
+                          onOpenNotifications={() => setIsNotificationsOpen(true)}
+                          userLevel={level}
+                          userXp={xp}
+                        />
+                      )}
+                      {currentTab === 'explore' && (
+                        <ExploreScreen
+                          onSpotSelected={(spot) => {
+                            setSelectedSpot(spot);
+                            logAction(`Selected spot ${spot.title}`);
+                          }}
+                          onAwardXp={handleAwardXp}
+                          onShowToast={showToast}
+                        />
+                      )}
+                      {currentTab === 'map' && (
+                        <MapScreen
+                          onShowToast={showToast}
+                          onAwardXp={handleAwardXp}
+                          onOpenNavRd={() => {
+                            setNavRdType('navigation');
+                            setIsNavRdOpen(true);
+                          }}
+                        />
+                      )}
+                      {(currentTab === 'friends' || currentTab === 'messages') && (
+                        <MessagesScreen
+                          onShowToast={showToast}
+                          onSelectSpot={(spot) => {
+                            setSelectedSpot(spot);
+                            logAction(`Selected spot ${spot.title} from chat`);
+                          }}
+                          onSelectQuest={(quest) => {
+                            setActiveQuest(quest);
+                            setShowQuestBox(true);
+                            logAction(`Opened quest ${quest.title} from chat`);
+                          }}
+                          onNavigateToMap={() => setCurrentTab('map')}
+                          onNavigateTab={(tab) => setCurrentTab(tab as any)}
+                          initialConversationId={targetChatConversationId}
+                          masterSpots={KAOS_SPOTS}
+                          kaosBotMessages={kaosBotMessages}
+                        />
+                      )}
+                      {currentTab === 'profile' && (
+                        <ProfileScreen
+                          onShowToast={showToast}
+                          onSpotSelected={(spot) => setSelectedSpot(spot)}
+                        />
+                      )}
+                      {currentTab === 'assistant' && (
+                        <KaosBotScreen
+                          messages={kaosBotMessages}
+                          onSendMessage={handleSendKaosBotMessage}
+                          loading={kaosLoading}
+                          activeSpot={selectedSpot}
+                          activeQuest={activeQuest}
+                          appContext={currentAppContext}
+                          onSpotSelected={(spot) => setSelectedSpot(spot)}
+                          onShowToast={showToast}
+                          onNavigateTab={setCurrentTab}
+                          onOpenNavRd={() => {
+                            setNavRdType('rd');
+                            setIsNavRdOpen(true);
+                          }}
+                        />
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                </main>
+
+                {/* Spot Detail & Audio Guide Modal */}
+                <SpotDetailModal
+                  spot={selectedSpot}
+                  onClose={() => setSelectedSpot(null)}
+                  onShowToast={showToast}
+                  onStartQuest={handleStartDynamicQuest}
+                  onOpenShareToChat={(attachment) => setShareToChatAttachment(attachment)}
+                />
+
+                {/* Standalone Share to Messages Chat Modal */}
+                <ShareToChatModal
+                  isOpen={!!shareToChatAttachment}
+                  onClose={() => setShareToChatAttachment(null)}
+                  attachment={shareToChatAttachment}
+                  onShowToast={showToast}
+                  onNavigateToChat={(convId) => {
+                    setTargetChatConversationId(convId);
+                    setUnreadChatCount(0);
+                    setCurrentTab('messages');
+                  }}
+                />
+
+                {showQuestBox && activeQuest && (
+                  <QuestBox
+                    quest={activeQuest}
+                    onVerify={handleVerifyQuest}
+                    onClose={() => setShowQuestBox(false)}
+                    onOpenShareToChat={(attachment) => setShareToChatAttachment(attachment)}
                   />
                 )}
-                {currentTab === 'profile' && (
-                  <ProfileScreen
-                    onShowToast={showToast}
-                    onSpotSelected={(spot) => setSelectedSpot(spot)}
-                  />
-                )}
-                {currentTab === 'assistant' && (
-                  <KaosBotScreen
-                    messages={kaosBotMessages}
-                    onSendMessage={handleSendKaosBotMessage}
-                    loading={kaosLoading}
-                    activeSpot={selectedSpot}
-                    activeQuest={activeQuest}
-                    appContext={currentAppContext}
-                    onSpotSelected={(spot) => setSelectedSpot(spot)}
-                    onShowToast={showToast}
-                    onNavigateTab={setCurrentTab}
-                  />
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </main>
 
-          {/* Spot Detail & Audio Guide Modal */}
-          <SpotDetailModal
-            spot={selectedSpot}
-            onClose={() => setSelectedSpot(null)}
-            onShowToast={showToast}
-            onStartQuest={handleStartDynamicQuest}
-            onOpenShareToChat={(attachment) => setShareToChatAttachment(attachment)}
-          />
+                {/* SQL Deep Intelligence & Offline Database Modal */}
+                <SqlExplorerModal
+                  isOpen={sqlExplorerOpen}
+                  onClose={() => setSqlExplorerOpen(false)}
+                  onShowToast={showToast}
+                />
 
-          {/* Standalone Share to Messages Chat Modal */}
-          <ShareToChatModal
-            isOpen={!!shareToChatAttachment}
-            onClose={() => setShareToChatAttachment(null)}
-            attachment={shareToChatAttachment}
-            onShowToast={showToast}
-            onNavigateToChat={(convId) => {
-              setTargetChatConversationId(convId);
-              setUnreadChatCount(0);
-              setCurrentTab('messages');
-            }}
-          />
+                {/* Global Instant Command Palette (Cmd+K) */}
+                <CommandPalette
+                  isOpen={commandPaletteOpen}
+                  onClose={() => setCommandPaletteOpen(false)}
+                  onSelectSpot={(spot) => setSelectedSpot(spot)}
+                  onNavigateTab={setCurrentTab}
+                  onOpenSqlExplorer={() => setSqlExplorerOpen(true)}
+                  onOpenNavRd={() => {
+                    setNavRdType('navigation');
+                    setIsNavRdOpen(true);
+                  }}
+                />
 
-          {showQuestBox && activeQuest && (
-            <QuestBox
-              quest={activeQuest}
-              onVerify={handleVerifyQuest}
-              onClose={() => setShowQuestBox(false)}
-              onOpenShareToChat={(attachment) => setShareToChatAttachment(attachment)}
-            />
-          )}
+                {/* Google Search Grounded Navigation & R&D Radar Modal */}
+                <NavigationRdModal
+                  isOpen={isNavRdOpen}
+                  onClose={() => setIsNavRdOpen(false)}
+                  onShowToast={showToast}
+                  initialQuery={navRdQuery}
+                  initialType={navRdType}
+                />
 
-          {/* SQL Deep Intelligence & Offline Database Modal */}
-          <SqlExplorerModal
-            isOpen={sqlExplorerOpen}
-            onClose={() => setSqlExplorerOpen(false)}
-            onShowToast={showToast}
-          />
+                {/* Dynamic Theme Engine Modal */}
+                <ThemeEngineModal
+                  isOpen={isThemeEngineOpen}
+                  onClose={() => setIsThemeEngineOpen(false)}
+                  onShowToast={showToast}
+                />
 
-          {/* Global Instant Command Palette (Cmd+K) */}
-          <CommandPalette
-            isOpen={commandPaletteOpen}
-            onClose={() => setCommandPaletteOpen(false)}
-            onSelectSpot={(spot) => setSelectedSpot(spot)}
-            onNavigateTab={setCurrentTab}
-            onOpenSqlExplorer={() => setSqlExplorerOpen(true)}
-          />
+                {/* Persistent Floating Soundscape Mini-Player */}
+                <SoundscapeMiniPlayer
+                  onOpenSpotDossier={(spot) => setSelectedSpot(spot)}
+                />
 
-          {/* Persistent Floating Soundscape Mini-Player */}
-          <SoundscapeMiniPlayer
-            onOpenSpotDossier={(spot) => setSelectedSpot(spot)}
-          />
+                {/* Level Up Celebration Modal */}
+                <LevelUpCelebrationModal
+                  isOpen={levelUpCelebration.isOpen}
+                  newLevel={levelUpCelebration.level}
+                  totalXp={levelUpCelebration.xp}
+                  onClose={() =>
+                    setLevelUpCelebration((prev) => ({ ...prev, isOpen: false }))
+                  }
+                />
 
-          {/* Level Up Celebration Modal */}
-          <LevelUpCelebrationModal
-            isOpen={levelUpCelebration.isOpen}
-            newLevel={levelUpCelebration.level}
-            totalXp={levelUpCelebration.xp}
-            onClose={() =>
-              setLevelUpCelebration((prev) => ({ ...prev, isOpen: false }))
-            }
-          />
+                {/* Notifications Modal Overlay */}
+                <NotificationsModal
+                  userId={getActiveUserId()}
+                  isOpen={isNotificationsOpen}
+                  onClose={() => setIsNotificationsOpen(false)}
+                />
 
-          {/* Notifications Modal Overlay */}
-          <NotificationsModal
-            userId={getActiveUserId()}
-            isOpen={isNotificationsOpen}
-            onClose={() => setIsNotificationsOpen(false)}
-          />
+                {/* Handle Setup Modal */}
+                <HandleSetupModal
+                  isOpen={isHandleSetupOpen}
+                  currentHandle="usha_explorer"
+                  onSaveHandle={async (newHandle) => {
+                    showToast(`Reserved handle @${newHandle}! 🔥`);
+                  }}
+                  onClose={() => setIsHandleSetupOpen(false)}
+                />
 
-          {/* Handle Setup Modal */}
-          <HandleSetupModal
-            isOpen={isHandleSetupOpen}
-            currentHandle="usha_explorer"
-            onSaveHandle={async (newHandle) => {
-              showToast(`Reserved handle @${newHandle}! 🔥`);
-            }}
-            onClose={() => setIsHandleSetupOpen(false)}
-          />
-
-          {/* Persistent Bottom Navigation */}
-          <BottomBar
-            currentTab={currentTab}
-            onTabSelected={(tab) => {
-              if (tab === 'friends') setUnreadChatCount(0);
-              setCurrentTab(tab);
-              logAction(`Switched to ${tab} tab`);
-            }}
-            unreadChatCount={unreadChatCount}
-          />
-        </div>
-      </APIProvider>
-    </SoundscapeProvider>
+                {/* Persistent Bottom Navigation */}
+                <BottomBar
+                  currentTab={currentTab}
+                  onTabSelected={(tab) => {
+                    if (tab === 'friends') setUnreadChatCount(0);
+                    setCurrentTab(tab);
+                    logAction(`Switched to ${tab} tab`);
+                  }}
+                  unreadChatCount={unreadChatCount}
+                />
+              </div>
+            </APIProvider>
+          </SoundscapeProvider>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

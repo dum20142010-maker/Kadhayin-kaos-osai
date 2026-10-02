@@ -1,22 +1,28 @@
 import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 import { Map, AdvancedMarker, Pin, InfoWindow } from '@vis.gl/react-google-maps';
 import { soundscapes } from '../lib/soundscapeEngine';
 import { KAOS_SPOTS } from '../data/kaosData';
 import { MasterSpot } from '../types';
 import { useLiveGeolocation, calculateDistanceMeters } from '../hooks/useLiveGeolocation';
+import { logActivity } from '../services/activityService';
+import { auth } from '../lib/firebase';
+import { KaosAppIcon } from '../components/KaosAppIcon';
 
 interface MapScreenProps {
   onShowToast: (msg: string) => void;
   onAwardXp?: (amount: number, reason: string) => void;
+  onOpenNavRd?: () => void;
 }
 
-export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) => {
+export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp, onOpenNavRd }) => {
   const [activeSoundscape, setActiveSoundscape] = useState<string>('temple');
   const [isPlaying, setIsPlaying] = useState(false);
   const [viewMode, setViewMode] = useState<'ar' | 'map' | 'snapshot'>('ar');
   const [bearing, setBearing] = useState<number>(42);
   const [selectedSpotId, setSelectedSpotId] = useState<string>('senate-house');
   const [infoWindowSpot, setInfoWindowSpot] = useState<MasterSpot | null>(null);
+  const controls = useAnimation();
 
   // Native Live Geolocation hook with continuous GPS tracking
   const { coords: userCoords, isLiveGps } = useLiveGeolocation(13.0642, 80.2811);
@@ -25,8 +31,25 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const currentActiveSpot: MasterSpot =
-    KAOS_SPOTS.find((s) => s.id === selectedSpotId) || KAOS_SPOTS[0];
+  const spotIndex = KAOS_SPOTS.findIndex(s => s.id === selectedSpotId);
+  const currentActiveSpot: MasterSpot = KAOS_SPOTS[spotIndex] || KAOS_SPOTS[0];
+
+  const navigateSpot = (direction: 'next' | 'prev') => {
+    let nextIndex = direction === 'next' ? spotIndex + 1 : spotIndex - 1;
+    if (nextIndex >= KAOS_SPOTS.length) nextIndex = 0;
+    if (nextIndex < 0) nextIndex = KAOS_SPOTS.length - 1;
+    
+    const nextSpot = KAOS_SPOTS[nextIndex];
+    setSelectedSpotId(nextSpot.id);
+    onShowToast(`Switched frequency to: ${nextSpot.title}`);
+    soundscapes.playSuccessTone();
+    
+    // Visual "haptic" bounce
+    controls.start({
+      scale: [1, 1.05, 1],
+      transition: { duration: 0.2 }
+    });
+  };
 
   const distanceToTargetMeters = calculateDistanceMeters(
     userCoords.lat,
@@ -75,8 +98,19 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
 
       if (raw.verified || distanceToTargetMeters <= 500) {
         soundscapes.playSuccessTone();
-        if (onAwardXp) onAwardXp(raw.xpAwarded || currentActiveSpot.xp, currentActiveSpot.title);
-        onShowToast(`🎯 GPS Geofence Check-In Confirmed! +${raw.xpAwarded || currentActiveSpot.xp} XP unlocked!`);
+        const xpAwarded = raw.xpAwarded || currentActiveSpot.xp;
+        if (onAwardXp) onAwardXp(xpAwarded, currentActiveSpot.title);
+        onShowToast(`🎯 GPS Geofence Check-In Confirmed! +${xpAwarded} XP unlocked!`);
+        
+        // Log to global activity feed
+        logActivity({
+          explorerId: auth.currentUser?.uid || 'anonymous',
+          explorerName: auth.currentUser?.displayName || 'Explorer',
+          actionType: 'check_in',
+          locationName: currentActiveSpot.title,
+          zone: currentActiveSpot.zone,
+          xpGained: xpAwarded
+        });
       } else {
         onShowToast(
           `Target is ${distanceToTargetMeters}m away. Move closer to verify.`
@@ -209,6 +243,17 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
               <span className="material-symbols-outlined text-[16px]">photo_camera</span>
               <span>Snapshot</span>
             </button>
+
+            {onOpenNavRd && (
+              <button
+                onClick={onOpenNavRd}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-kaos-pink to-kaos-purple hover:opacity-95 text-white shadow-md shadow-kaos-pink/20"
+                title="Live Transit Navigation & Archaeological R&D (Google Search Grounded)"
+              >
+                <KaosAppIcon size={16} withGlow={false} />
+                <span>Navigation & R&D Radar</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -236,8 +281,17 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
                 </div>
               </div>
 
-              {/* Holographic Target Viewfinder */}
-              <div className="relative rounded-3xl overflow-hidden border border-[#26242C] bg-gradient-to-b from-[#18161D] to-black p-8 text-center space-y-6 shadow-inner">
+              {/* Holographic Target Viewfinder with Swipe Navigation */}
+              <motion.div 
+                drag="x"
+                dragConstraints={{ left: 0, right: 0 }}
+                onDragEnd={(_, info) => {
+                  if (info.offset.x > 80) navigateSpot('prev');
+                  else if (info.offset.x < -80) navigateSpot('next');
+                }}
+                animate={controls}
+                className="relative rounded-3xl overflow-hidden border border-[#26242C] bg-gradient-to-b from-[#18161D] to-black p-8 text-center space-y-6 shadow-inner cursor-grab active:cursor-grabbing"
+              >
                 <div className="absolute inset-0 bg-[radial-gradient(#00E5FF_1px,transparent_1px)] [background-size:24px_24px] opacity-20 pointer-events-none" />
 
                 {/* Rotating AR Reticle */}
@@ -249,32 +303,53 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
                   <div className="w-20 h-20 rounded-2xl bg-[#00E5FF]/15 border border-[#00E5FF]/50 flex items-center justify-center text-white shadow-xl shadow-[#00E5FF]/20">
                     <span className="material-symbols-outlined text-4xl text-[#00E5FF]">explore</span>
                   </div>
+                  
+                  {/* Swipe Hints */}
+                  <div className="absolute -left-12 top-1/2 -translate-y-1/2 opacity-30 animate-pulse hidden md:block">
+                    <span className="material-symbols-outlined text-cyan-400">chevron_left</span>
+                  </div>
+                  <div className="absolute -right-12 top-1/2 -translate-y-1/2 opacity-30 animate-pulse hidden md:block">
+                    <span className="material-symbols-outlined text-cyan-400">chevron_right</span>
+                  </div>
                 </div>
 
                 {/* Clear Target Info */}
-                <div className="relative z-10 space-y-2 max-w-md mx-auto">
-                  <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
-                    <span className="text-[#00E5FF] font-bold font-mono">{currentActiveSpot.zone} Sector</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-cyan-400 font-bold font-mono">{distanceToTargetMeters}m away</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-zinc-300 tabular-nums">+{currentActiveSpot.xp} XP</span>
-                  </div>
+                <AnimatePresence mode="wait">
+                  <motion.div 
+                    key={selectedSpotId}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="relative z-10 space-y-2 max-w-md mx-auto"
+                  >
+                    <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
+                      <span className="text-[#00E5FF] font-bold font-mono">{currentActiveSpot.zone} Sector</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-cyan-400 font-bold font-mono">{distanceToTargetMeters}m away</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-zinc-300 tabular-nums">+{currentActiveSpot.xp} XP</span>
+                    </div>
 
-                  <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">
-                    {currentActiveSpot.title}
-                  </h3>
+                    <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+                      {currentActiveSpot.title}
+                    </h3>
 
-                  <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2">
-                    {currentActiveSpot.description}
-                  </p>
+                    <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2">
+                      {currentActiveSpot.description}
+                    </p>
 
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-black/60 border border-[#26242C] text-amber-400 font-mono text-xs">
-                    <span>Bearing: {bearing}° NE</span>
-                    <span>·</span>
-                    <span>Distance: {distanceToTargetMeters}m</span>
-                  </div>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-black/60 border border-[#26242C] text-amber-400 font-mono text-xs">
+                      <span>Bearing: {bearing}° NE</span>
+                      <span>·</span>
+                      <span>Distance: {distanceToTargetMeters}m</span>
+                    </div>
+                  </motion.div>
+                </AnimatePresence>
+
+                <div className="text-[10px] text-zinc-500 font-mono font-bold uppercase tracking-widest mt-4">
+                  Swipe Horizontal to Retune Frequency
                 </div>
+              </motion.div>
 
                 {/* Bearing Angle Slider Control */}
                 <div className="relative z-10 bg-black/70 backdrop-blur-md p-4 rounded-2xl border border-[#26242C] space-y-2 max-w-md mx-auto">
@@ -291,29 +366,27 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onShowToast, onAwardXp }) 
                     className="w-full accent-[#F05423] cursor-pointer"
                   />
                 </div>
-              </div>
+                {/* Action Buttons Deck */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <button
+                    onClick={handleVerifyGeofence}
+                    disabled={checkingIn}
+                    className="py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white font-bold text-xs uppercase tracking-wider hover:opacity-95 transition-opacity cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#F05423]/25 disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">verified</span>
+                    <span>{checkingIn ? 'Verifying Beacon...' : `GPS Check-In (+${currentActiveSpot.xp} XP)`}</span>
+                  </button>
 
-              {/* Action Buttons Deck */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <button
-                  onClick={handleVerifyGeofence}
-                  disabled={checkingIn}
-                  className="py-3.5 px-4 rounded-2xl bg-gradient-to-r from-[#F05423] to-[#FF8A00] text-white font-bold text-xs uppercase tracking-wider hover:opacity-95 transition-opacity cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#F05423]/25 disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-[20px]">verified</span>
-                  <span>{checkingIn ? 'Verifying Beacon...' : `GPS Check-In (+${currentActiveSpot.xp} XP)`}</span>
-                </button>
-
-                <button
-                  onClick={() => setViewMode('snapshot')}
-                  className="py-3.5 px-4 rounded-2xl bg-[#121114] hover:bg-[#26242C] border border-[#26242C] text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <span className="material-symbols-outlined text-[20px]">photo_camera</span>
-                  <span>Capture 1888 Postcard</span>
-                </button>
+                  <button
+                    onClick={() => setViewMode('snapshot')}
+                    className="py-3.5 px-4 rounded-2xl bg-[#121114] hover:bg-[#26242C] border border-[#26242C] text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">photo_camera</span>
+                    <span>Capture 1888 Postcard</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {viewMode === 'map' && (
             <div className="bg-[#1C1A1F] border border-[#26242C] rounded-3xl p-6 md:p-8 shadow-2xl space-y-5">

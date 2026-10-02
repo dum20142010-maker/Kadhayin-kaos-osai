@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MasterSpot } from '../types';
 import { KAOS_SPOTS } from '../data/kaosData';
 import { MobileBottomSheet } from '../components/MobileBottomSheet';
+import { KaosAppIcon } from '../components/KaosAppIcon';
 
 interface HomeScreenProps {
   onShowToast: (msg: string) => void;
@@ -58,16 +59,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       {/* 1. Header */}
       <div className="flex items-center justify-between pt-2">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => onNavigateTab('profile')}
-            className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#F05423] to-[#FF8A00] flex items-center justify-center text-2xl shadow-md shadow-[#F05423]/25 shrink-0 cursor-pointer"
-          >
-            {userAvatar}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => onNavigateTab('profile')}
+              className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#1C1A1F] to-[#26242C] border border-white/10 flex items-center justify-center text-2xl shadow-md shrink-0 cursor-pointer overflow-hidden"
+            >
+              {userAvatar}
+            </button>
+            <div className="absolute -bottom-1 -right-1 pointer-events-none">
+              <KaosAppIcon size={18} withGlow={false} />
+            </div>
+          </div>
           <div>
-            <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest font-bold">
-              Vanakkam • Welcome Back
-            </span>
+            <div className="flex items-center gap-1.5">
+              <KaosAppIcon size={14} withGlow={false} />
+              <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest font-bold">
+                KAOS Grid • Vanakkam
+              </span>
+            </div>
             <h2 className="text-lg font-extrabold text-white tracking-tight leading-none mt-0.5">
               {userName}
             </h2>
